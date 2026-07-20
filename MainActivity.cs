@@ -1,6 +1,9 @@
+using System.IO;
 using Android.Content;
+using Android.Util;
 using Android.Views;
 using Android.Widget;
+using FigureDrawing.Data;
 
 namespace FigureDrawing
 {
@@ -8,9 +11,14 @@ namespace FigureDrawing
     public class MainActivity : Activity
     {
         const int PickImagesRequestCode = 1000;
+        const string LogTag = "FigureDrawing";
+        const string DatabaseFileName = "figuredrawing.db";
 
         LinearLayout imageContainer = null!;
         TextView emptyLabel = null!;
+
+        SettingsStore settingsStore = null!;
+        AppSettings settings = null!;
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
@@ -18,11 +26,27 @@ namespace FigureDrawing
 
             SetContentView(Resource.Layout.activity_main);
 
+            // Open the local settings/config database (created on first launch) from the app's
+            // private files directory, then load the persisted settings.
+            var databasePath = Path.Combine(FilesDir!.AbsolutePath, DatabaseFileName);
+            settingsStore = new SettingsStore(databasePath);
+            settings = settingsStore.GetSettings();
+            Log.Info(LogTag,
+                $"Settings loaded from {databasePath}: " +
+                $"poseDuration={settings.PoseDurationSeconds}s, shuffle={settings.ShuffleImages}, " +
+                $"grayscale={settings.GrayscaleMode}");
+
             imageContainer = FindViewById<LinearLayout>(Resource.Id.image_container)!;
             emptyLabel = FindViewById<TextView>(Resource.Id.empty_label)!;
 
             var pickButton = FindViewById<Button>(Resource.Id.pick_button)!;
             pickButton.Click += (_, _) => PickImages();
+        }
+
+        protected override void OnDestroy()
+        {
+            settingsStore?.Dispose();
+            base.OnDestroy();
         }
 
         // Opens the system file picker filtered to images. ACTION_GET_CONTENT does not
