@@ -1,8 +1,11 @@
 using System.IO;
 using Android.Content;
+using Android.Database;
+using Android.Provider;
 using Android.Util;
 using Android.Views;
 using Android.Widget;
+using FigureDrawing.Core;
 using FigureDrawing.Data;
 
 namespace FigureDrawing
@@ -10,7 +13,7 @@ namespace FigureDrawing
     [Activity(Label = "@string/app_name", MainLauncher = true)]
     public class MainActivity : Activity
     {
-        const int PickImagesRequestCode = 1000;
+        const int PickFolderRequestCode = 1000;
         const string LogTag = "FigureDrawing";
         const string DatabaseFileName = "figuredrawing.db";
 
@@ -40,7 +43,12 @@ namespace FigureDrawing
             emptyLabel = FindViewById<TextView>(Resource.Id.empty_label)!;
 
             var pickButton = FindViewById<Button>(Resource.Id.pick_button)!;
-            pickButton.Click += (_, _) => PickImages();
+            pickButton.Click += (_, _) => PickFolder();
+
+            // Restore the folder chosen on a previous launch, if the persisted URI permission
+            // is still granted. A revoked permission (folder deleted, permission cleared) is
+            // expected and simply leaves the empty state showing.
+            RestoreLastFolder();
         }
 
         protected override void OnDestroy()
@@ -49,48 +57,163 @@ namespace FigureDrawing
             base.OnDestroy();
         }
 
-        // Opens the system file picker filtered to images. ACTION_GET_CONTENT does not
-        // require any runtime storage permission and returns a readable content:// Uri.
-        void PickImages()
+        // Opens the system folder picker (Storage Access Framework). ACTION_OPEN_DOCUMENT_TREE
+        // returns a tree content:// Uri granting access to the folder and everything under it.
+        void PickFolder()
         {
-            var intent = new Intent(Intent.ActionGetContent);
-            intent.SetType("image/*");
-            intent.AddCategory(Intent.CategoryOpenable);
-            intent.PutExtra(Intent.ExtraAllowMultiple, true);
-
-            StartActivityForResult(
-                Intent.CreateChooser(intent, GetString(Resource.String.pick_button_text)),
-                PickImagesRequestCode);
+            var intent = new Intent(Intent.ActionOpenDocumentTree);
+            StartActivityForResult(intent, PickFolderRequestCode);
         }
 
         protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
         {
             base.OnActivityResult(requestCode, resultCode, data);
 
-            if (requestCode != PickImagesRequestCode || resultCode != Result.Ok || data is null)
+            if (requestCode != PickFolderRequestCode || resultCode != Result.Ok)
                 return;
 
-            imageContainer.RemoveAllViews();
+            var treeUri = data?.Data;
+            if (treeUri is null)
+                return;
 
-            if (data.ClipData is { } clip)
+            // Handling a folder result must never crash the app. Persisting the grant, writing
+            // settings, or enumerating the tree can each throw (SecurityException, provider quirks,
+            // out-of-memory on large images); a failure here shows a message instead of dying.
+            try
             {
-                for (int i = 0; i < clip.ItemCount; i++)
+                // Persist the read grant so the folder can be reused on the next launch. Pass the
+                // read flag as a constant — deriving it from data.Flags is fragile: on some devices
+                // the result intent reports no flags, yielding 0 and a SecurityException.
+                ContentResolver!.TakePersistableUriPermission(treeUri, ActivityFlags.GrantReadUriPermission);
+
+                settings.LastCollection = treeUri.ToString();
+                settingsStore.SaveSettings(settings);
+
+                Log.Info(LogTag, $"Folder selected: {treeUri}");
+                LoadFolder(treeUri);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, $"Failed to open folder {treeUri}: {ex}");
+                imageContainer.RemoveAllViews();
+                emptyLabel.Text = GetString(Resource.String.folder_error_text);
+                emptyLabel.Visibility = ViewStates.Visible;
+            }
+        }
+
+        void RestoreLastFolder()
+        {
+            if (string.IsNullOrEmpty(settings.LastCollection))
+                return;
+
+            var treeUri = Android.Net.Uri.Parse(settings.LastCollection);
+            if (treeUri is null)
+                return;
+
+            // Only reload if we still hold a persisted read permission for the tree.
+            foreach (var permission in ContentResolver!.PersistedUriPermissions)
+            {
+                if (permission.IsReadPermission && permission.Uri?.Equals(treeUri) == true)
                 {
-                    var uri = clip.GetItemAt(i)?.Uri;
-                    if (uri is not null)
-                        AddImage(uri);
+                    LoadFolder(treeUri);
+                    return;
                 }
             }
-            else if (data.Data is { } single)
+
+            Log.Info(LogTag, $"Persisted permission for {treeUri} no longer held; skipping restore.");
+        }
+
+        // Enumerates image files under the picked tree (recursively, via the testable
+        // FolderImageEnumerator) and shows them. Any entry whose MIME type starts with "image/"
+        // is accepted (jpg/png/webp/gif/heic/...).
+        void LoadFolder(Android.Net.Uri treeUri)
+        {
+            imageContainer.RemoveAllViews();
+
+            var rootDocumentId = DocumentsContract.GetTreeDocumentId(treeUri);
+            if (rootDocumentId is not null)
             {
-                AddImage(single);
+                var tree = new ContentResolverDocumentTree(ContentResolver!, treeUri);
+                foreach (var documentId in FolderImageEnumerator.EnumerateImages(tree, rootDocumentId))
+                {
+                    var fileUri = DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId);
+                    if (fileUri is not null)
+                        AddImage(fileUri);
+                }
             }
 
-            emptyLabel.Visibility = imageContainer.ChildCount > 0 ? ViewStates.Gone : ViewStates.Visible;
+            if (imageContainer.ChildCount > 0)
+            {
+                emptyLabel.Visibility = ViewStates.Gone;
+            }
+            else
+            {
+                emptyLabel.Text = GetString(Resource.String.empty_folder_text);
+                emptyLabel.Visibility = ViewStates.Visible;
+            }
         }
+
+        // Adapts a Storage Access Framework tree (DocumentsContract + ContentResolver) to the
+        // IDocumentTree abstraction the pure enumerator walks.
+        sealed class ContentResolverDocumentTree(ContentResolver resolver, Android.Net.Uri treeUri)
+            : IDocumentTree
+        {
+            public IEnumerable<DocumentEntry> GetChildren(string parentDocumentId)
+            {
+                var childrenUri =
+                    DocumentsContract.BuildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
+
+                ICursor? cursor = resolver.Query(
+                    childrenUri!,
+                    new[]
+                    {
+                        DocumentsContract.Document.ColumnDocumentId,
+                        DocumentsContract.Document.ColumnMimeType,
+                    },
+                    null, null, null);
+
+                if (cursor is null)
+                    yield break;
+
+                try
+                {
+                    while (cursor.MoveToNext())
+                    {
+                        var documentId = cursor.GetString(0);
+                        if (documentId is null)
+                            continue;
+
+                        yield return new DocumentEntry(documentId, cursor.GetString(1));
+                    }
+                }
+                finally
+                {
+                    cursor.Close();
+                }
+            }
+        }
+
+        // Bound on the decoded size of each reference image (px). Real photos are far larger; using
+        // SetImageURI would decode them at full resolution and exhaust memory for a folder of them.
+        const int MaxImageDimension = 1080;
 
         void AddImage(Android.Net.Uri uri)
         {
+            Android.Graphics.Bitmap? bitmap;
+            try
+            {
+                bitmap = DecodeSampledBitmap(uri, MaxImageDimension, MaxImageDimension);
+            }
+            catch (Exception ex)
+            {
+                // A single unreadable/oversized image must not sink the whole folder.
+                Log.Warn(LogTag, $"Skipping image {uri}: {ex.Message}");
+                return;
+            }
+
+            if (bitmap is null)
+                return;
+
             var imageView = new ImageView(this);
 
             var layoutParams = new LinearLayout.LayoutParams(
@@ -100,9 +223,27 @@ namespace FigureDrawing
 
             imageView.LayoutParameters = layoutParams;
             imageView.SetAdjustViewBounds(true);
-            imageView.SetImageURI(uri);
+            imageView.SetImageBitmap(bitmap);
 
             imageContainer.AddView(imageView);
+        }
+
+        // Decodes uri down-sampled so the result is ~reqWidth x reqHeight, keeping memory bounded.
+        // First pass reads only the bounds; the second decodes at the computed sample size.
+        Android.Graphics.Bitmap? DecodeSampledBitmap(Android.Net.Uri uri, int reqWidth, int reqHeight)
+        {
+            var bounds = new Android.Graphics.BitmapFactory.Options { InJustDecodeBounds = true };
+            using (var stream = ContentResolver!.OpenInputStream(uri))
+                Android.Graphics.BitmapFactory.DecodeStream(stream, null, bounds);
+
+            var options = new Android.Graphics.BitmapFactory.Options
+            {
+                InSampleSize = BitmapMath.CalculateInSampleSize(
+                    bounds.OutWidth, bounds.OutHeight, reqWidth, reqHeight),
+            };
+
+            using var decodeStream = ContentResolver!.OpenInputStream(uri);
+            return Android.Graphics.BitmapFactory.DecodeStream(decodeStream, null, options);
         }
     }
 }

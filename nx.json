@@ -1,0 +1,26 @@
+{
+  "installation": {
+    "version": "23.1.0",
+    "plugins": {
+      "@nx/dotnet": "23.1.0"
+    }
+  },
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "master",
+  "analytics": true,
+  "plugins": [
+    "@nx/dotnet"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*"
+    ],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.Tests/**/*",
+      "!{projectRoot}/**/bin/**/*",
+      "!{projectRoot}/**/obj/**/*"
+    ]
+  },
+  "nxCloudId": "6a5e5793963de3fb50b4049a"
+}

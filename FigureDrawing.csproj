@@ -15,7 +15,19 @@
     <TrimMode>full</TrimMode>
   </PropertyGroup>
 
+  <!--
+    This app project lives at the repo root, so its default **/*.cs glob would otherwise pull in
+    the sibling FigureDrawing.Core / FigureDrawing.Tests sources. They are referenced as projects
+    instead; exclude their folders from this project's compilation.
+  -->
   <ItemGroup>
-    <PackageReference Include="LiteDB" Version="5.0.21" />
+    <Compile Remove="FigureDrawing.Core\**\*.cs" />
+    <Compile Remove="FigureDrawing.Tests\**\*.cs" />
+    <Compile Remove="FigureDrawing.UITests\**\*.cs" />
+  </ItemGroup>
+
+  <!-- LiteDB comes transitively via FigureDrawing.Core (which owns Data/SettingsStore). -->
+  <ItemGroup>
+    <ProjectReference Include="FigureDrawing.Core\FigureDrawing.Core.csproj" />
   </ItemGroup>
 </Project>

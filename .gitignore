@@ -11,6 +11,10 @@
 *.sln.docstates
 docs/
 
+# Appium E2E runner artifacts (scripts/run-appium-tests.ps1)
+appium-server.log
+appium-server.log.err
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
@@ -362,3 +366,11 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+.nx/installation
+.nx/cache
+.nx/workspace-data
+.nx/self-healing
+.nx/migrate-runs
+.nx/polygraph
+.claude/worktrees
+.claude/settings.local.json

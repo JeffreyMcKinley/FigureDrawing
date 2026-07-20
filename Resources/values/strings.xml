@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">FigureDrawing</string>
-    <string name="pick_button_text">Pick images</string>
-    <string name="empty_label_text">No images selected yet. Tap \"Pick images\" to load local files.</string>
+    <string name="pick_button_text">Pick folder</string>
+    <string name="empty_label_text">No folder selected yet. Tap \"Pick folder\" to choose a folder of reference images.</string>
+    <string name="empty_folder_text">No images found in that folder. Pick a folder that contains image files.</string>
+    <string name="folder_error_text">Couldn\'t open that folder. Try picking it again.</string>
 </resources>
