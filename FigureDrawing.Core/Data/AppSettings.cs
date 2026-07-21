@@ -12,6 +12,10 @@ namespace FigureDrawing.Data
         // How long each pose/reference image is shown, in seconds.
         public int PoseDurationSeconds { get; set; } = 30;
 
+        // How many images a session shows in total (FD-002 session setup). Persisted so the count
+        // chosen last time seeds the setup screen on the next launch.
+        public int SessionImageCount { get; set; } = 20;
+
         // Whether to shuffle the selected images rather than show them in order.
         public bool ShuffleImages { get; set; } = true;
 

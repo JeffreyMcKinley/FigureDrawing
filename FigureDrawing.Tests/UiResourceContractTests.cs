@@ -81,6 +81,22 @@ public class UiResourceContractTests
     public void ActivityMain_DeclaresFdViews(string id) =>
         Assert.Contains(id, LayoutIds("activity_main"));
 
+    // FD-002 session-setup view contract: the two inputs and the Start button.
+    [Theory]
+    [InlineData("seconds_input")]
+    [InlineData("count_input")]
+    [InlineData("start_button")]
+    public void ActivityMain_DeclaresSessionSetupViews(string id) =>
+        Assert.Contains(id, LayoutIds("activity_main"));
+
+    // FD-002 session-setup string contract: input labels + Start label.
+    [Theory]
+    [InlineData("seconds_label_text")]
+    [InlineData("count_label_text")]
+    [InlineData("start_button_text")]
+    public void Strings_DeclaresSessionSetupStrings(string name) =>
+        Assert.Contains(name, StringResourceNames());
+
     // FD-001 explicit string contract: picker label + both empty-state messages.
     [Theory]
     [InlineData("app_name")]

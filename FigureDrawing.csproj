@@ -30,4 +30,22 @@
   <ItemGroup>
     <ProjectReference Include="FigureDrawing.Core\FigureDrawing.Core.csproj" />
   </ItemGroup>
+
+  <!--
+    One-command run: `dotnet build FigureDrawing.csproj -t:RunEmulator` boots the
+    FigureDrawing_Pixel emulator (if none is attached) and deploys + launches the app via the
+    run-app script. Force a device when several are attached with -p:RunTarget=emulator-5554.
+    Delegates to the same scripts/run-app.* used for a manual run so the flow stays in one place.
+  -->
+  <Target Name="RunEmulator">
+    <PropertyGroup>
+      <_RunTargetArg Condition="'$(RunTarget)' != ''">-Target $(RunTarget)</_RunTargetArg>
+    </PropertyGroup>
+    <Exec Condition="'$(OS)' == 'Windows_NT'"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;scripts\run-app.ps1&quot; $(_RunTargetArg)" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          Command="bash scripts/run-app.sh $(RunTarget)" />
+  </Target>
 </Project>

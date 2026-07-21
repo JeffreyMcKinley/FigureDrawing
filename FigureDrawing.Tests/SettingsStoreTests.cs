@@ -23,6 +23,7 @@ public sealed class SettingsStoreTests : IDisposable
         var settings = store.GetSettings();
 
         Assert.Equal(30, settings.PoseDurationSeconds);
+        Assert.Equal(20, settings.SessionImageCount);
         Assert.True(settings.ShuffleImages);
         Assert.False(settings.GrayscaleMode);
         Assert.Null(settings.LastCollection);
@@ -35,6 +36,7 @@ public sealed class SettingsStoreTests : IDisposable
         {
             var settings = store.GetSettings();
             settings.PoseDurationSeconds = 60;
+            settings.SessionImageCount = 40;
             settings.ShuffleImages = false;
             settings.GrayscaleMode = true;
             // FD-001: the picked folder tree URI is persisted here.
@@ -47,6 +49,7 @@ public sealed class SettingsStoreTests : IDisposable
         var restored = reopened.GetSettings();
 
         Assert.Equal(60, restored.PoseDurationSeconds);
+        Assert.Equal(40, restored.SessionImageCount);
         Assert.False(restored.ShuffleImages);
         Assert.True(restored.GrayscaleMode);
         Assert.Equal(

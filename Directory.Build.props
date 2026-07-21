@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Supplies the Android SDK and JDK locations to every build in this repo, so an IDE build
+    (Ctrl+B in Visual Studio / Rider) succeeds without hand-passing
+    -p:AndroidSdkDirectory / -p:JavaSdkDirectory on the command line.
+
+    Every rule is guarded so it never overrides an explicit choice or breaks another machine:
+      - an already-set property (env var or an explicit -p: on the CLI) always wins, and
+      - each fallback path is applied only when it Exists().
+    On a machine without these exact paths the properties simply stay empty, leaving the CLI
+    -p: workflow (see memory: android-build-env) unchanged.
+  -->
+
+  <!-- Android SDK: prefer ANDROID_HOME, else the default per-user install location. -->
+  <PropertyGroup Condition="'$(AndroidSdkDirectory)' == ''">
+    <AndroidSdkDirectory Condition="'$(ANDROID_HOME)' != '' and Exists('$(ANDROID_HOME)')">$(ANDROID_HOME)</AndroidSdkDirectory>
+    <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(LOCALAPPDATA)\Android\Sdk')">$(LOCALAPPDATA)\Android\Sdk</AndroidSdkDirectory>
+  </PropertyGroup>
+
+  <!--
+    Java SDK: Microsoft.Android 35 rejects the machine-default JDK 25 (JAVA_HOME) with
+    "XA0034: Failed to get the Java SDK version", so point the build at JDK 17.
+  -->
+  <PropertyGroup Condition="'$(JavaSdkDirectory)' == ''">
+    <JavaSdkDirectory Condition="Exists('$(ProgramFiles)\Microsoft\jdk-17.0.19.10-hotspot')">$(ProgramFiles)\Microsoft\jdk-17.0.19.10-hotspot</JavaSdkDirectory>
+  </PropertyGroup>
+
+</Project>

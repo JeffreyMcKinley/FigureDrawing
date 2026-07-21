@@ -12,6 +12,41 @@
         android:layout_height="wrap_content"
         android:text="@string/pick_button_text" />
 
+    <!-- FD-002 session setup: seconds-per-image and image-count inputs + Start. -->
+    <TextView
+        android:id="@+id/seconds_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="@string/seconds_label_text" />
+
+    <EditText
+        android:id="@+id/seconds_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="number" />
+
+    <TextView
+        android:id="@+id/count_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/count_label_text" />
+
+    <EditText
+        android:id="@+id/count_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="number" />
+
+    <Button
+        android:id="@+id/start_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:enabled="false"
+        android:text="@string/start_button_text" />
+
     <TextView
         android:id="@+id/empty_label"
         android:layout_width="match_parent"
