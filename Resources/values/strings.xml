@@ -7,4 +7,8 @@
     <string name="seconds_label_text">Seconds per image</string>
     <string name="count_label_text">Number of images</string>
     <string name="start_button_text">Start session</string>
+    <string name="session_image_desc">Current reference image</string>
+    <string name="session_timer_desc">Time remaining for this pose</string>
+    <string name="session_timer_placeholder">0:00</string>
+    <string name="session_error_text">Couldn\'t display these images. Go back and pick another folder.</string>
 </resources>

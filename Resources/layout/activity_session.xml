@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FD-004 session player screen. One reference image at a time, filling the available space without
+  distortion (fitCenter keeps aspect ratio), on a black background so it reads like a lightbox. The
+  status text overlays the center only when an image can't be shown.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/session_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <ImageView
+        android:id="@+id/session_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/session_image_desc" />
+
+    <!--
+      FD-005 countdown. Overlays the top of the image (the pose fills the whole screen) so it is
+      always visible without stealing space from the drawing reference. Large and monospaced-ish so
+      it reads at arm's length from an easel.
+    -->
+    <TextView
+        android:id="@+id/session_timer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:padding="12dp"
+        android:textSize="32sp"
+        android:textStyle="bold"
+        android:shadowColor="@android:color/black"
+        android:shadowRadius="6"
+        android:textColor="@android:color/white"
+        android:contentDescription="@string/session_timer_desc"
+        android:text="@string/session_timer_placeholder" />
+
+    <TextView
+        android:id="@+id/session_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:padding="24dp"
+        android:gravity="center"
+        android:textColor="@android:color/white"
+        android:visibility="gone"
+        android:text="@string/session_error_text" />
+</FrameLayout>

@@ -20,6 +20,10 @@ namespace FigureDrawing
         LinearLayout imageContainer = null!;
         TextView emptyLabel = null!;
 
+        // Content-uri strings for every image the picked folder yielded, in enumeration order. This
+        // is the pool handed to the session engine (FD-003) when Start is tapped (FD-004).
+        readonly List<string> imageUris = new();
+
         EditText secondsInput = null!;
         EditText countInput = null!;
         Button startButton = null!;
@@ -150,6 +154,7 @@ namespace FigureDrawing
         void LoadFolder(Android.Net.Uri treeUri)
         {
             imageContainer.RemoveAllViews();
+            imageUris.Clear();
 
             var rootDocumentId = DocumentsContract.GetTreeDocumentId(treeUri);
             if (rootDocumentId is not null)
@@ -158,12 +163,17 @@ namespace FigureDrawing
                 foreach (var documentId in FolderImageEnumerator.EnumerateImages(tree, rootDocumentId))
                 {
                     var fileUri = DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId);
-                    if (fileUri is not null)
-                        AddImage(fileUri);
+                    if (fileUri is null)
+                        continue;
+
+                    // Record the uri for the session pool regardless of whether the preview decodes;
+                    // the session player (FD-004) handles any that turn out unreadable.
+                    imageUris.Add(fileUri.ToString()!);
+                    AddImage(fileUri);
                 }
             }
 
-            if (imageContainer.ChildCount > 0)
+            if (imageUris.Count > 0)
             {
                 emptyLabel.Visibility = ViewStates.Gone;
             }
@@ -175,7 +185,7 @@ namespace FigureDrawing
 
             // A session needs images to run, so the Start gate opens only when the folder yielded at
             // least one image (FD-002).
-            folderSelected = imageContainer.ChildCount > 0;
+            folderSelected = imageUris.Count > 0;
             UpdateStartState();
         }
 
@@ -199,9 +209,19 @@ namespace FigureDrawing
             settings.SessionImageCount = config.ImageCount;
             settingsStore.SaveSettings(settings);
 
-            // FD-003 will consume this config to run the session; for now, record the handoff.
             Log.Info(LogTag,
-                $"Session start: {config.SecondsPerImage}s/image, {config.ImageCount} images.");
+                $"Session start: {config.SecondsPerImage}s/image, {config.ImageCount} images, " +
+                $"{imageUris.Count} in pool.");
+
+            // FD-004: hand the pool + config to the session player screen. Shuffle/grayscale come
+            // from the persisted settings; the player reads them from the intent extras.
+            var intent = new Intent(this, typeof(SessionActivity));
+            intent.PutExtra(SessionActivity.ExtraPool, imageUris.ToArray());
+            intent.PutExtra(SessionActivity.ExtraSeconds, config.SecondsPerImage);
+            intent.PutExtra(SessionActivity.ExtraCount, config.ImageCount);
+            intent.PutExtra(SessionActivity.ExtraShuffle, settings.ShuffleImages);
+            intent.PutExtra(SessionActivity.ExtraGrayscale, settings.GrayscaleMode);
+            StartActivity(intent);
         }
 
         // Adapts a Storage Access Framework tree (DocumentsContract + ContentResolver) to the
@@ -253,7 +273,8 @@ namespace FigureDrawing
             Android.Graphics.Bitmap? bitmap;
             try
             {
-                bitmap = DecodeSampledBitmap(uri, MaxImageDimension, MaxImageDimension);
+                bitmap = ImageDecoding.DecodeSampledBitmap(
+                    ContentResolver!, uri, MaxImageDimension, MaxImageDimension);
             }
             catch (Exception ex)
             {
@@ -277,24 +298,6 @@ namespace FigureDrawing
             imageView.SetImageBitmap(bitmap);
 
             imageContainer.AddView(imageView);
-        }
-
-        // Decodes uri down-sampled so the result is ~reqWidth x reqHeight, keeping memory bounded.
-        // First pass reads only the bounds; the second decodes at the computed sample size.
-        Android.Graphics.Bitmap? DecodeSampledBitmap(Android.Net.Uri uri, int reqWidth, int reqHeight)
-        {
-            var bounds = new Android.Graphics.BitmapFactory.Options { InJustDecodeBounds = true };
-            using (var stream = ContentResolver!.OpenInputStream(uri))
-                Android.Graphics.BitmapFactory.DecodeStream(stream, null, bounds);
-
-            var options = new Android.Graphics.BitmapFactory.Options
-            {
-                InSampleSize = BitmapMath.CalculateInSampleSize(
-                    bounds.OutWidth, bounds.OutHeight, reqWidth, reqHeight),
-            };
-
-            using var decodeStream = ContentResolver!.OpenInputStream(uri);
-            return Android.Graphics.BitmapFactory.DecodeStream(decodeStream, null, options);
         }
     }
 }
