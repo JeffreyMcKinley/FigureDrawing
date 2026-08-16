@@ -9,7 +9,7 @@
 *.user
 *.userosscache
 *.sln.docstates
-docs/
+docs/tickets
 
 # Appium E2E runner artifacts (scripts/run-appium-tests.ps1)
 appium-server.log

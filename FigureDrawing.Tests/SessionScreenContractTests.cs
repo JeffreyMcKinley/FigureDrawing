@@ -109,6 +109,31 @@ public class SessionScreenContractTests
         Assert.NotEqual("invisible", timer.Attribute(Android + "visibility")?.Value);
     }
 
+    // FD-005 regression: the timer overlays the very top of the pose, so an opaque ActionBar (the
+    // default theme's title bar) would draw straight over it and hide it. The session screen is a
+    // full-bleed lightbox and must run under a NoActionBar theme.
+    [Fact]
+    public void SessionActivity_UsesANoActionBarTheme_SoTheTimerIsNotHidden()
+    {
+        var activityAttribute = Regex.Match(SessionActivitySource, @"\[Activity\((?<args>[^\]]*)\)\]",
+            RegexOptions.Singleline);
+
+        Assert.True(activityAttribute.Success, "SessionActivity is missing its [Activity(...)] attribute.");
+        Assert.Contains("NoActionBar", activityAttribute.Groups["args"].Value);
+    }
+
+    // With no ActionBar reserving the top inset, the timer would otherwise sit under the status bar.
+    // fitsSystemWindows on the root keeps the whole pose (and its timer) clear of the system bars.
+    [Fact]
+    public void SessionRoot_FitsSystemWindows_SoTheTimerClearsTheStatusBar()
+    {
+        var doc = XDocument.Load(TestPaths.Path("Resources", "layout", "activity_session.xml"));
+        var root = doc.Descendants()
+            .First(e => e.Attribute(Android + "id")?.Value == "@+id/session_root");
+
+        Assert.Equal("true", root.Attribute(Android + "fitsSystemWindows")?.Value);
+    }
+
     // The screen must drive the countdown from the Core PoseCountdown and reset it per pose, and it
     // must pause/resume with the lifecycle (FD-005 acceptance). Source-level guard: these are
     // Android-only code paths the unit tests can't execute.

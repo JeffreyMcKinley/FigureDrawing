@@ -18,7 +18,13 @@ namespace FigureDrawing
     //
     // Skip/end controls (FD-006/007) land in later tickets. When the session completes it returns to
     // the setup screen (the summary screen is FD-007).
-    [Activity(Label = "@string/app_name")]
+    //
+    // NoActionBar theme: the countdown (FD-005) overlays the very top of the pose, but the default
+    // theme's ActionBar (the "FigureDrawing" title bar) is opaque and draws over that same top strip,
+    // hiding the timer entirely. A full-bleed lightbox has no need for a title bar anyway; dropping it
+    // lets the timer sit at the true top. session_root uses fitsSystemWindows so the timer still clears
+    // the status bar.
+    [Activity(Label = "@string/app_name", Theme = "@android:style/Theme.Material.NoActionBar")]
     public class SessionActivity : Activity
     {
         // Intent extras handed over by MainActivity.StartSession.
