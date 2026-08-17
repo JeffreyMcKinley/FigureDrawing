@@ -269,6 +269,21 @@ Rules:
   that way.
 - The full Android compile test is opt-in via `RUN_ANDROID_BUILD_TEST=1`.
 
+### Versioning APKs
+
+- `version.props` is the only place a version number lives: `major.minor.patch` plus a build number
+  for re-releases of the same code. Nothing else may hardcode one — the app csproj deliberately does
+  not set `ApplicationVersion` / `ApplicationDisplayVersion`, and `VersionTests` fails if it starts.
+- `Directory.Build.props` derives from it: `android:versionName` is `1.2.3` (or `1.2.3.4` with a
+  build number) and `android:versionCode` is `major*1000000 + minor*10000 + patch*100 + build`.
+  The packing is why minor/patch/build are capped at 99 — a field at 100 carries into the one above
+  and two different releases would ship the same code, which a device reads as "not an upgrade".
+- Bump with `pwsh scripts/bump-version.ps1 -Patch|-Minor|-Major|-Build|-Set 2.0.0`; a semantic bump
+  resets the build number. CI can stamp one build without a commit via `-p:FdBuildNumber=N`.
+- `scripts/build-apk.ps1` names its output `artifacts/FigureDrawing-<version>-<config>.apk` and
+  writes a matching `.json` manifest (versionCode, commit, dirty flag, SHA-256, UTC time), so a
+  generated APK can be traced back to the source it came from.
+
 ## 13. Adding a feature — the checklist
 
 1. Write the rule as a pure type in `FigureDrawing.Core`, taking any platform need as an

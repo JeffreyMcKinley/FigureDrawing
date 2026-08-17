@@ -1,5 +1,44 @@
 <Project>
 
+  <Import Project="$(MSBuildThisFileDirectory)version.props" />
+
+  <!--
+    Version derivation. version.props holds the four numbers; everything a build or a device sees is
+    computed here so no second copy can drift:
+
+      ApplicationDisplayVersion -> android:versionName, the string a human reads ("1.2.3", or
+                                   "1.2.3.4" when a build number is in play).
+      ApplicationVersion        -> android:versionCode, the packed integer Android compares when
+                                   deciding whether an APK is an upgrade. See version.props.
+
+    -p:FdBuildNumber=7 on the command line overrides the file (global properties win), which is how
+    a CI job stamps a build without committing.
+
+    These are set for every project in the repo. Only the app project consumes the Application*
+    pair; Core/Tests take Version and InformationalVersion, so an assembly pulled out of a build
+    output can still be identified.
+  -->
+  <PropertyGroup>
+    <_FdCodeMajor>$([MSBuild]::Multiply($(FdVersionMajor), 1000000))</_FdCodeMajor>
+    <_FdCodeMinor>$([MSBuild]::Multiply($(FdVersionMinor), 10000))</_FdCodeMinor>
+    <_FdCodePatch>$([MSBuild]::Multiply($(FdVersionPatch), 100))</_FdCodePatch>
+    <_FdCode>$([MSBuild]::Add($(_FdCodeMajor), $(_FdCodeMinor)))</_FdCode>
+    <_FdCode>$([MSBuild]::Add($(_FdCode), $(_FdCodePatch)))</_FdCode>
+    <_FdCode>$([MSBuild]::Add($(_FdCode), $(FdBuildNumber)))</_FdCode>
+
+    <FdSemanticVersion>$(FdVersionMajor).$(FdVersionMinor).$(FdVersionPatch)</FdSemanticVersion>
+    <FdFullVersion>$(FdSemanticVersion)</FdFullVersion>
+    <FdFullVersion Condition="'$(FdBuildNumber)' != '0'">$(FdSemanticVersion).$(FdBuildNumber)</FdFullVersion>
+
+    <ApplicationVersion>$(_FdCode)</ApplicationVersion>
+    <ApplicationDisplayVersion>$(FdFullVersion)</ApplicationDisplayVersion>
+
+    <Version>$(FdSemanticVersion)</Version>
+    <AssemblyVersion>$(FdSemanticVersion).0</AssemblyVersion>
+    <FileVersion>$(FdVersionMajor).$(FdVersionMinor).$(FdVersionPatch).$(FdBuildNumber)</FileVersion>
+    <InformationalVersion>$(FdFullVersion)</InformationalVersion>
+  </PropertyGroup>
+
   <!--
     Supplies the Android SDK and JDK locations to every build in this repo, so an IDE build
     (Ctrl+B in Visual Studio / Rider) succeeds without hand-passing

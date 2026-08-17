@@ -12,8 +12,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationId>com.companyname.FigureDrawing</ApplicationId>
-    <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!--
+      ApplicationVersion (versionCode) and ApplicationDisplayVersion (versionName) are NOT set here.
+      They are derived in Directory.Build.props from version.props, the single source of truth;
+      a value written here would silently win over it. Bump with scripts/bump-version.ps1.
+    -->
     <!--
       Enables trim analyzers and full trimming during Release mode.
       To learn more, see: https://learn.microsoft.com/dotnet/core/deploying/trimming/trimming-options#trimming-granularity

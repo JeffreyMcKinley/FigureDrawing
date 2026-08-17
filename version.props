@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    THE single source of truth for the app's version. Nothing else in the repo may hardcode a
+    version number: the csproj, the APK filename, the build manifest and the tests all derive from
+    the four properties below (derivation lives in Directory.Build.props).
+
+    Edit this file with `pwsh scripts/bump-version.ps1 -Patch` (or -Minor / -Major / -Set 2.1.0)
+    rather than by hand, so the build number is reset with the same commit.
+
+      FdVersionMajor.FdVersionMinor.FdVersionPatch  - the semantic version an artist would quote.
+      FdBuildNumber                                 - re-releases of the same semantic version
+                                                      (a rebuild that fixes packaging, not code).
+
+    Ranges are enforced by VersionTests: minor, patch and build are each 0-99, because all four
+    numbers are packed into one Android versionCode:
+
+      versionCode = major*1000000 + minor*10000 + patch*100 + build
+
+    versionCode must increase on every APK a device is asked to upgrade to, and Android/Play will
+    never accept a lower one for the same ApplicationId. The packing keeps it monotonic in the
+    semantic version for free (1.2.3+0 is 1020300, 1.2.4+0 is 1020400) and leaves room for major
+    up to 2147 before the int32 ceiling.
+  -->
+
+  <PropertyGroup>
+    <FdVersionMajor>0</FdVersionMajor>
+    <FdVersionMinor>1</FdVersionMinor>
+    <FdVersionPatch>0</FdVersionPatch>
+    <FdBuildNumber>3</FdBuildNumber>
+  </PropertyGroup>
+
+</Project>
