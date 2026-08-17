@@ -40,7 +40,12 @@
                 android:scaleType="fitCenter"
                 android:contentDescription="@string/session_image_desc" />
 
-            <!-- Rule-of-thirds guides: two vertical and two horizontal hairlines over the pose. -->
+            <!--
+              Rule-of-thirds guides: two vertical and two horizontal lines over the pose. The
+              @color/grid_line background is only what they look like before the screen has sampled
+              a pose — SessionActivity replaces it with a per-line core+casing drawable whose tone
+              comes from the strip of image each one crosses (Core/GridContrast.cs).
+            -->
             <FrameLayout
                 android:id="@+id/session_grid"
                 android:layout_width="match_parent"
@@ -53,9 +58,9 @@
                     android:orientation="horizontal">
 
                     <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
-                    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@color/grid_line" />
+                    <View android:id="@+id/session_grid_v1" android:layout_width="@dimen/grid_line_band" android:layout_height="match_parent" android:background="@color/grid_line" />
                     <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
-                    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@color/grid_line" />
+                    <View android:id="@+id/session_grid_v2" android:layout_width="@dimen/grid_line_band" android:layout_height="match_parent" android:background="@color/grid_line" />
                     <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
                 </LinearLayout>
 
@@ -65,9 +70,9 @@
                     android:orientation="vertical">
 
                     <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
-                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/grid_line" />
+                    <View android:id="@+id/session_grid_h1" android:layout_width="match_parent" android:layout_height="@dimen/grid_line_band" android:background="@color/grid_line" />
                     <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
-                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/grid_line" />
+                    <View android:id="@+id/session_grid_h2" android:layout_width="match_parent" android:layout_height="@dimen/grid_line_band" android:background="@color/grid_line" />
                     <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
                 </LinearLayout>
             </FrameLayout>

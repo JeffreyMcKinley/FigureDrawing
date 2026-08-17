@@ -40,8 +40,21 @@
     <color name="overlay_break">#EB161826</color>
     <color name="overlay_pause">#E6161826</color>
 
-    <!-- Rule-of-thirds guides over the pose: rgba(233,233,237,0.18). -->
-    <color name="grid_line">#2EE9E9ED</color>
+    <!--
+      Rule-of-thirds guides over the pose. grid_line is the XML-time default, used before the
+      screen has sampled a pose and whenever a guide falls on the letterbox bar rather than on the
+      image; the other four are what GridContrast picks between once it has.
+
+      "light"/"dark" name the guide itself, not the region under it: a light region takes the dark
+      core, and the casing is always the opposite tone of the core so the line survives a local
+      patch that fights its region's average. Raised from the design system's 0.18 wash, which
+      vanished over a bright reference.
+    -->
+    <color name="grid_line">#59E9E9ED</color>
+    <color name="grid_line_light">#59E9E9ED</color>
+    <color name="grid_line_dark">#59000000</color>
+    <color name="grid_casing_light">#40E9E9ED</color>
+    <color name="grid_casing_dark">#40000000</color>
 
     <!-- Unfilled part of the countdown ring. -->
     <color name="ring_track">#FF3F424D</color>

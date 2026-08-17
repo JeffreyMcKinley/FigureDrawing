@@ -61,6 +61,7 @@ project means adding a fourth exclude.
 | `ViewerTools` | Grayscale/flip/grid/blur flags and the zoom range for the pose on screen |
 | `ReferenceLibrary` / `IDocumentTree` / `DocumentEntry` | The picked folder, the recursive image discovery beneath it, and the pool |
 | `BitmapMath` | Power-of-two sub-sample calculation |
+| `GridContrast` | Which tone each rule-of-thirds guide takes from the pose under it |
 | `Data/Settings` | The persisted settings document and its LiteDB store |
 
 Nine domain objects, deliberately: what each one is and why the neighbours it absorbed are not
@@ -370,10 +371,16 @@ Four contexts, each a cohesive vocabulary with its own rules. All four live in
 | **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, breaks, resolving an id to a displayable image, the totals, the viewing aids | `DrawingSession<TImage>`, `ViewerTools` | `FigureDrawing.Core/Session` |
 | **Preferences** | The persisted settings document and its lifecycle | `Settings` | `FigureDrawing.Core/Data` |
 
-Supporting, deliberately outside the four: **Rendering** (`ImageDecoding`, `BitmapMath`, the
-`ImageView` wiring). It has no domain rules — only the memory-bound decode policy of §8. It is a
-shared technical service, not a context, and `BitmapMath` is the one piece of it pure enough to
-live in Core.
+Supporting, deliberately outside the four: **Rendering** (`ImageDecoding`, `BitmapMath`,
+`GridContrast`, the `ImageView` wiring). It has no domain rules — only the memory-bound decode
+policy of §8 and the legibility policy of the viewing aids. It is a shared technical service, not a
+context, and `BitmapMath` and `GridContrast` are the pieces of it pure enough to live in Core.
+
+`GridContrast` is where a viewing aid's *appearance* is decided, as against `ViewerTools`, which
+owns whether that aid is on. Keeping the two apart is what lets `ViewerTools` stay a bag of pure
+flags (`INV-VIEW-3`): the screen samples the decoded pose down to a small block of pixels once per
+pose and asks `GridContrast` which tone each guide takes, and neither the block nor the answer is
+ever session state.
 
 ### Context map
 

@@ -183,6 +183,10 @@ public class SessionScreenContractTests
     [InlineData("summary_skipped")]
     [InlineData("summary_again")]
     [InlineData("summary_settings")]
+    [InlineData("session_grid_v1")]
+    [InlineData("session_grid_v2")]
+    [InlineData("session_grid_h1")]
+    [InlineData("session_grid_h2")]
     public void ActivitySession_DeclaresTheImportedPlayerViews(string id) =>
         Assert.Contains(id, LayoutIds("activity_session"));
 
@@ -335,6 +339,71 @@ public class SessionScreenContractTests
         Assert.Contains("catch", loader);
         Assert.Contains("return null;", loader);
     }
+
+    // --- Rule-of-thirds guides -----------------------------------------------
+
+    // The four guides must be inside session_grid, or toggling the grid chip would leave some of
+    // them painted over every pose.
+    [Theory]
+    [InlineData("session_grid_v1")]
+    [InlineData("session_grid_v2")]
+    [InlineData("session_grid_h1")]
+    [InlineData("session_grid_h2")]
+    public void GridGuides_LiveInsideTheGridOverlay(string id) =>
+        Assert.Contains("session_grid", AncestorIds(Element(id))!);
+
+    // The reported bug was that a 1dp hairline is too thin to read against a photograph. The width
+    // is now one token, and a literal creeping back into the layout is the regression.
+    [Theory]
+    [InlineData("session_grid_v1", "layout_width")]
+    [InlineData("session_grid_v2", "layout_width")]
+    [InlineData("session_grid_h1", "layout_height")]
+    [InlineData("session_grid_h2", "layout_height")]
+    public void GridGuides_TakeTheirThicknessFromTheBandDimen(string id, string attribute) =>
+        Assert.Equal("@dimen/grid_line_band", Element(id).Attribute(Android + attribute)?.Value);
+
+    // SessionActivity resolves these by name at runtime (GetColor / GetDimensionPixelSize), so a
+    // rename compiles cleanly and crashes on device — the failure this tier exists to catch (§10).
+    [Theory]
+    [InlineData("colors.xml", "color", "grid_line")]
+    [InlineData("colors.xml", "color", "grid_line_light")]
+    [InlineData("colors.xml", "color", "grid_line_dark")]
+    [InlineData("colors.xml", "color", "grid_casing_light")]
+    [InlineData("colors.xml", "color", "grid_casing_dark")]
+    [InlineData("dimens.xml", "dimen", "grid_line_core")]
+    [InlineData("dimens.xml", "dimen", "grid_line_casing")]
+    [InlineData("dimens.xml", "dimen", "grid_line_band")]
+    public void Values_DeclareTheGridTokens(string file, string element, string name) =>
+        Assert.Contains(name, ValueResourceNames(file, element));
+
+    // band = core + a casing down each side. If they drift apart the core is either clipped or
+    // floats inside a band wider than it, and the guide stops looking like one line.
+    [Fact]
+    public void GridBand_IsTheCorePlusACasingEachSide()
+    {
+        var core = Dip("grid_line_core");
+        var casing = Dip("grid_line_casing");
+        var band = Dip("grid_line_band");
+
+        Assert.Equal(core + (2 * casing), band);
+    }
+
+    static double Dip(string name)
+    {
+        var value = XDocument.Load(TestPaths.Path("Resources", "values", "dimens.xml"))
+            .Root!.Elements("dimen")
+            .First(e => e.Attribute("name")?.Value == name).Value;
+
+        Assert.EndsWith("dp", value);
+
+        // Invariant: an Android resource value, not a culture-formatted number.
+        return double.Parse(value[..^2], CultureInfo.InvariantCulture);
+    }
+
+    static IEnumerable<string> ValueResourceNames(string file, string element) =>
+        XDocument.Load(TestPaths.Path("Resources", "values", file))
+            .Root!.Elements(element)
+            .Select(e => e.Attribute("name")!.Value);
 
     // The fitCenter scale type is what keeps the image filling the screen WITHOUT distortion
     // (FD-004 acceptance). Guard it against an accidental edit to a stretching scale type.

@@ -2,6 +2,7 @@ using Android.Content;
 using Android.Content.PM;
 using Android.Content.Res;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.Media;
 using Android.Util;
 using Android.Views;
@@ -123,6 +124,25 @@ namespace FigureDrawing
         // reference, so it must free the pixels when it repoints the view or goes away.
         Bitmap? displayed;
 
+        // --- Rule-of-thirds guides ---
+        // One painter per guide, in GridStyles order: the two verticals left to right, then the two
+        // horizontals top to bottom.
+        GridLinePainter[] gridPainters = Array.Empty<GridLinePainter>();
+
+        // The four colors.xml tokens GridContrast picks between, read once.
+        GridPalette gridPalette;
+
+        // The current pose reduced to a SampleGrid x SampleGrid block of pixels, plus the size of
+        // the bitmap it came from. Sampled once when the pose changes and then reused, so zooming
+        // or flipping re-resolves the guides without touching the bitmap again. Null means "not
+        // sampled" — GridContrast treats an empty span as a fallback, so nothing special-cases it.
+        int[]? gridSamples;
+        int gridSampleWidth;
+        int gridSampleHeight;
+
+        // Held so it can be detached in OnDestroy (docs/ARCHITECTURE.md §8).
+        EventHandler<View.LayoutChangeEventArgs>? stageLayoutChanged;
+
         // Session inputs, kept so "Run it again" can rebuild an identical session.
         string[] pool = Array.Empty<string>();
         int secondsPerImage;
@@ -216,6 +236,11 @@ namespace FigureDrawing
             tone?.Dispose();
             tone = null;
 
+            // Every listener on a long-lived object is detached (docs/ARCHITECTURE.md §8).
+            if (stage is not null && stageLayoutChanged is not null)
+                stage.LayoutChange -= stageLayoutChanged;
+            stageLayoutChanged = null;
+
             // Null-safe: OnCreate can throw before BindViews runs, and a teardown that NREs would
             // mask the original failure and leak the bitmap it came here to free.
             image?.SetImageDrawable(null);
@@ -233,6 +258,7 @@ namespace FigureDrawing
             rail = FindViewById<LinearLayout>(Resource.Id.session_rail)!;
             image = FindViewById<ImageView>(Resource.Id.session_image)!;
             grid = FindViewById<View>(Resource.Id.session_grid)!;
+            BindGuides();
             status = FindViewById<TextView>(Resource.Id.session_status)!;
             timer = FindViewById<TextView>(Resource.Id.session_timer)!;
             progressLabel = FindViewById<TextView>(Resource.Id.session_progress)!;
@@ -289,6 +315,32 @@ namespace FigureDrawing
 
             FindViewById<Button>(Resource.Id.summary_again)!.Click += (_, _) => StartSession();
             FindViewById<Button>(Resource.Id.summary_settings)!.Click += (_, _) => Finish();
+        }
+
+        // The four rule-of-thirds guides. Their views are only needed to hang a painter on, so they
+        // are locals rather than four fields that nothing would read again.
+        void BindGuides()
+        {
+            var casingPx = Resources!.GetDimensionPixelSize(Resource.Dimension.grid_line_casing);
+
+            gridPainters = new[]
+            {
+                new GridLinePainter(FindViewById<View>(Resource.Id.session_grid_v1)!, casingPx, vertical: true),
+                new GridLinePainter(FindViewById<View>(Resource.Id.session_grid_v2)!, casingPx, vertical: true),
+                new GridLinePainter(FindViewById<View>(Resource.Id.session_grid_h1)!, casingPx, vertical: false),
+                new GridLinePainter(FindViewById<View>(Resource.Id.session_grid_h2)!, casingPx, vertical: false),
+            };
+
+            gridPalette = new GridPalette(
+                LightLine: GetColor(Resource.Color.grid_line_light),
+                LightCasing: GetColor(Resource.Color.grid_casing_light),
+                DarkLine: GetColor(Resource.Color.grid_line_dark),
+                DarkCasing: GetColor(Resource.Color.grid_casing_dark));
+
+            // Where each guide falls on the pose depends on the stage's size, which is not known
+            // until layout has run and changes again when a fold opens. Detached in OnDestroy.
+            stageLayoutChanged = (_, _) => ApplyGridColors();
+            stage.LayoutChange += stageLayoutChanged;
         }
 
         // Builds (or rebuilds, for "Run it again") a session from the extras this screen was started
@@ -424,6 +476,13 @@ namespace FigureDrawing
                 image.SetImageBitmap(bitmap);
                 ReleaseDisplayed();
                 displayed = bitmap;
+
+                // Once per pose, never per tick: the guides take their tone from this image, and
+                // this branch is the only place that knows it changed.
+                gridSamples = SampleForGuides(bitmap);
+                gridSampleWidth = bitmap.Width;
+                gridSampleHeight = bitmap.Height;
+                ApplyGridColors();
             }
 
             breakOverlay.Visibility = session.OnBreak ? ViewStates.Visible : ViewStates.Gone;
@@ -566,6 +625,10 @@ namespace FigureDrawing
 
             grid.Visibility = tools.Grid ? ViewStates.Visible : ViewStates.Gone;
 
+            // Zoom and flip both move where a guide lands on the pose, so its tone is re-resolved
+            // here. This reads the cached samples only — no bitmap work.
+            ApplyGridColors();
+
             // Flip is a negative horizontal scale, so it composes with zoom in one transform.
             var zoom = (float)tools.Zoom;
             image.ScaleX = tools.Flip ? -zoom : zoom;
@@ -642,6 +705,12 @@ namespace FigureDrawing
         // recycling the same bitmap twice.
         void ReleaseDisplayed()
         {
+            // The samples describe the bitmap being let go, so they go with it. A stale block would
+            // colour the next pose's guides from the previous pose's image.
+            gridSamples = null;
+            gridSampleWidth = 0;
+            gridSampleHeight = 0;
+
             if (displayed is null)
                 return;
 
@@ -657,6 +726,113 @@ namespace FigureDrawing
             var matrix = new ColorMatrix();
             matrix.SetSaturation(0f);
             return new ColorMatrixColorFilter(matrix);
+        }
+
+        // --- Rule-of-thirds guides -------------------------------------------
+
+        // Reduce the pose to a small block of pixels for GridContrast. Filtered scaling makes each
+        // cell a box average of the region it stands for, which is what "the strip of image this
+        // guide crosses" needs. One rescale per pose, on a path that already paid for a full
+        // decode; never on the tick.
+        //
+        // Null means "could not sample" — the guides then fall back to the light style rather than
+        // the screen failing, which is the same outcome as a guide landing on the letterbox bar.
+        int[]? SampleForGuides(Bitmap bitmap)
+        {
+            Bitmap? scaled = null;
+
+            try
+            {
+                if (bitmap.IsRecycled)
+                    return null;
+
+                const int grid = GridContrast.SampleGrid;
+
+                scaled = Bitmap.CreateScaledBitmap(bitmap, grid, grid, filter: true);
+                if (scaled is null)
+                    return null;
+
+                var pixels = new int[grid * grid];
+                scaled.GetPixels(pixels, 0, grid, 0, 0, grid, grid);
+                return pixels;
+            }
+            catch (Exception ex)
+            {
+                // Boundary with the platform: log it and carry on with the default guides.
+                Log.Warn(LogTag, $"Could not sample the pose for the grid: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                // CreateScaledBitmap hands back the source itself when no scaling was needed, and
+                // recycling that would blank the pose.
+                if (scaled is not null && !ReferenceEquals(scaled, bitmap))
+                {
+                    if (!scaled.IsRecycled)
+                        scaled.Recycle();
+
+                    scaled.Dispose();
+                }
+            }
+        }
+
+        // Re-resolve every guide's tone against the pose as it is currently presented. Cheap enough
+        // to call from a layout change: it is arithmetic over the cached sample block.
+        void ApplyGridColors()
+        {
+            if (gridPainters.Length == 0 || tools is null)
+                return;
+
+            // A null array converts to an empty span, and GridContrast reads that as "no samples"
+            // and falls back — so an unsampled pose needs no branch here.
+            ReadOnlySpan<int> samples = gridSamples;
+
+            var styles = GridContrast.LineStyles(
+                samples,
+                GridContrast.SampleGrid,
+                stage.Width, stage.Height,
+                gridSampleWidth, gridSampleHeight,
+                tools.Zoom, tools.Flip,
+                gridPalette);
+
+            gridPainters[0].Apply(styles.VerticalLeft);
+            gridPainters[1].Apply(styles.VerticalRight);
+            gridPainters[2].Apply(styles.HorizontalTop);
+            gridPainters[3].Apply(styles.HorizontalBottom);
+        }
+
+        // One guide's background: a casing rectangle with the core laid inside it, inset by the
+        // casing width down the guide's two long edges. Two separate layers rather than one stroked
+        // drawable, so the tones stay distinct instead of blending where they meet — both are
+        // translucent, and a casing drawn over the core would just tint it.
+        //
+        // The drawables are built once and recoloured in place, so re-resolving on every zoom step
+        // allocates nothing.
+        sealed class GridLinePainter
+        {
+            readonly GradientDrawable casing = new();
+            readonly GradientDrawable core = new();
+            readonly LayerDrawable layers;
+
+            public GridLinePainter(View line, int casingPx, bool vertical)
+            {
+                layers = new LayerDrawable(new Drawable[] { casing, core });
+                layers.SetLayerInset(
+                    1,
+                    vertical ? casingPx : 0,
+                    vertical ? 0 : casingPx,
+                    vertical ? casingPx : 0,
+                    vertical ? 0 : casingPx);
+
+                line.Background = layers;
+            }
+
+            public void Apply(GridLineStyle style)
+            {
+                casing.SetColor(style.CasingArgb);
+                core.SetColor(style.LineArgb);
+                layers.InvalidateSelf();
+            }
         }
     }
 }

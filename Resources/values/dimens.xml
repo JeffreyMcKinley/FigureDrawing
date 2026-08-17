@@ -26,4 +26,13 @@
 
     <!-- Reference-grid cell height. Shorter with the fold open, where there are four columns. -->
     <dimen name="thumb_height">168dp</dimen>
+
+    <!--
+      Rule-of-thirds guides. The band is the whole line as laid out: a core stroke with a casing of
+      the opposite tone down each side, so band = core + 2 * casing. A 1dp hairline was too thin to
+      read against a photograph.
+    -->
+    <dimen name="grid_line_core">2dp</dimen>
+    <dimen name="grid_line_casing">1dp</dimen>
+    <dimen name="grid_line_band">4dp</dimen>
 </resources>
