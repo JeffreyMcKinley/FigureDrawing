@@ -32,10 +32,30 @@ namespace FigureDrawing
         // decodes far smaller than the player's 1080px.
         const int ThumbnailDimension = 360;
 
+        // Memory ceiling for a thumbnail's long side (px). 360 is the crop floor — a tile is
+        // center-cropped, so decoding below it would upscale — and this is the bound that holds
+        // whatever the aspect ratio is. Twice the floor, not the pose's 1080: power-of-two sampling
+        // leaves up to 2x slop either way, and at 1080 a 2000x700 scan would still decode at full
+        // size (5.6 MB) into a 360 px tile, times 24 tiles. At 720 the same file samples to
+        // 1000x350 — a 3% upscale inside a CenterCrop tile, and a quarter of the heap.
+        const int MaxThumbnailDimension = 720;
+
         // How many thumbnails the grid renders. A folder can hold thousands of photos; decoding all
         // of them would exhaust memory long before the drawer scrolled to them. The pool itself is
         // never truncated - every image found is still in the session - only the preview is.
         const int MaxThumbnails = 24;
+
+        // What may cross to the player in the start intent, bounded two ways because a count alone
+        // does not bound the size. Extras travel through a ~1 MB per-process Binder buffer; a SAF
+        // document id carries the whole relative path and is parcelled as UTF-16, so a deep tree
+        // with long filenames runs 200-300 characters — 500+ KB — per thousand ids, while a shallow
+        // one runs a fifth of that. Unbounded, a DCIM-sized library throws
+        // TransactionTooLargeException, uncaught and reproducing on every launch because the folder
+        // is persisted. Past either bound the library hands over a random sample of itself
+        // (INV-POOL-6); 1000 images is far more variety than a session of a few hundred poses can
+        // consume, and 128k characters is ~256 KB parcelled, a quarter of the buffer.
+        const int MaxPoolHandoff = 1000;
+        const int MaxPoolHandoffChars = 128_000;
 
         // --- Panes and tabs ---
         View paneSetup = null!;
@@ -102,6 +122,9 @@ namespace FigureDrawing
 
         protected override void OnDestroy()
         {
+            // ClearThumbnails guards its own fields — OnCreate can throw before BindLibrary runs.
+            ClearThumbnails();
+
             settings?.Dispose();
             base.OnDestroy();
         }
@@ -256,8 +279,15 @@ namespace FigureDrawing
 
             // FD-004: hand the pool + config to the session player screen. The preferences the player
             // needs travel as extras too — a screen never reads Settings on the far side (§16).
+            var handoff = library.Sample(MaxPoolHandoff, MaxPoolHandoffChars);
+
+            if (handoff.Count < library.Count)
+                Log.Info(LogTag,
+                    $"Pool of {library.Count} exceeds the {MaxPoolHandoff} handoff bound; " +
+                    $"sampling {handoff.Count} for this session.");
+
             var intent = new Intent(this, typeof(SessionActivity));
-            intent.PutExtra(SessionActivity.ExtraPool, library.Pool.ToArray());
+            intent.PutExtra(SessionActivity.ExtraPool, handoff.ToArray());
             intent.PutExtra(SessionActivity.ExtraSeconds, config.SecondsPerImage);
             intent.PutExtra(SessionActivity.ExtraCount, config.ImageCount);
             intent.PutExtra(SessionActivity.ExtraBreak, config.BreakSeconds);
@@ -265,7 +295,20 @@ namespace FigureDrawing
             intent.PutExtra(SessionActivity.ExtraGrayscale, settings.GrayscaleMode);
             intent.PutExtra(SessionActivity.ExtraKeepAwake, settings.KeepScreenAwake);
             intent.PutExtra(SessionActivity.ExtraChime, settings.ChimeOnChange);
-            StartActivity(intent);
+
+            // Crossing to another screen is a system boundary: throwing is not a defined outcome
+            // (§9, INV-X-11). The handoff bound should keep the extras well inside the Binder
+            // buffer, but a device with a smaller one must show a message rather than take the
+            // process down on every Start.
+            try
+            {
+                StartActivity(intent);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, $"Starting the session failed: {ex}");
+                poolLabel.Text = GetString(Resource.String.session_start_failed_text);
+            }
         }
 
         // --- Settings --------------------------------------------------------
@@ -361,7 +404,10 @@ namespace FigureDrawing
             catch (Exception ex)
             {
                 Log.Error(LogTag, $"Failed to open folder {treeUri}: {ex}");
-                ClearThumbnails();
+                ResetLibrary();
+
+                // After ResetLibrary, not before: RenderLibrary writes empty_folder_text for an
+                // empty library, so the specific message has to land last or it is clobbered.
                 emptyLabel.Text = GetString(Resource.String.folder_error_text);
                 emptyLabel.Visibility = ViewStates.Visible;
             }
@@ -391,9 +437,7 @@ namespace FigureDrawing
                     catch (Exception error)
                     {
                         Log.Warn(LogTag, $"Restoring {treeUri} failed: {error.Message}");
-                        library = ReferenceLibrary.Empty;
-                        RenderLibrary();
-                        UpdateStartState();
+                        ResetLibrary();
                     }
 
                     return;
@@ -424,12 +468,11 @@ namespace FigureDrawing
                         DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId)?.ToString());
 
                 // Every image found is in the pool regardless of whether its preview decodes; the
-                // session handles any that turn out unreadable.
-                foreach (var id in library.Pool)
+                // session handles any that turn out unreadable. The cap bounds decode ATTEMPTS, not
+                // successes — a folder of undecodable files must not cost one provider round trip
+                // per entry on the main thread.
+                foreach (var id in library.Pool.Take(MaxThumbnails))
                 {
-                    if (imageContainer.ChildCount >= MaxThumbnails)
-                        break;
-
                     if (Android.Net.Uri.Parse(id) is { } fileUri)
                         AddThumbnail(fileUri);
                 }
@@ -470,10 +513,47 @@ namespace FigureDrawing
             }
         }
 
+        // The grid owns its decoded previews: nothing else holds them (a session re-decodes from the
+        // uri), so detach the drawable, then free the pixels and the peer before dropping the views.
+        // Capture the bitmap before detaching — a second lookup afterwards can return a different
+        // peer.
         void ClearThumbnails()
         {
+            // Both fields are `null!` until BindLibrary runs, and OnCreate can throw before it does.
+            if (imageContainer is null || libraryMore is null)
+                return;
+
+            for (var i = imageContainer.ChildCount - 1; i >= 0; i--)
+            {
+                if (imageContainer.GetChildAt(i) is not ImageView view)
+                    continue;
+
+                // The drawable is a managed peer of its own; disposing it with the bitmap keeps the
+                // JNI global ref from outliving the pixels it wrapped.
+                using var drawable = view.Drawable as Android.Graphics.Drawables.BitmapDrawable;
+                var bitmap = drawable?.Bitmap;
+                view.SetImageDrawable(null);
+
+                if (bitmap is not null && !bitmap.IsRecycled)
+                    bitmap.Recycle();
+
+                bitmap?.Dispose();
+            }
+
             imageContainer.RemoveAllViews();
             libraryMore.Visibility = ViewStates.Gone;
+        }
+
+        // Back to the no-folder state, rendered whole: grid, count, empty label, pool card and the
+        // Start gate all describe the same (empty) pool. Without this a failed open leaves a blank
+        // grid under a header still reporting the previous folder's count, with Start still open on
+        // a pool the drawer was just told is gone.
+        void ResetLibrary()
+        {
+            ClearThumbnails();
+            library = ReferenceLibrary.Empty;
+            RenderLibrary();
+            UpdateStartState();
         }
 
         void AddThumbnail(Android.Net.Uri uri)
@@ -482,7 +562,7 @@ namespace FigureDrawing
             try
             {
                 bitmap = ImageDecoding.DecodeSampledBitmap(
-                    ContentResolver!, uri, ThumbnailDimension, ThumbnailDimension);
+                    ContentResolver!, uri, ThumbnailDimension, MaxThumbnailDimension);
             }
             catch (Exception ex)
             {

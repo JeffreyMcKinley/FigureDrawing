@@ -5,7 +5,12 @@
     The app is dark-only by design: a reference image is judged against its surround, so a light
     chrome would change how the drawer reads the values in it.
   -->
-  <application android:allowBackup="true" android:icon="@mipmap/appicon" android:label="@string/app_name" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true" android:theme="@style/AppTheme">
+  <!--
+    Backup is off, and the Android 12+ transports are constrained as well
+    (Resources/xml/data_extraction_rules.xml). The settings database holds the picked folder's uri,
+    which is the artist's own filesystem layout, and on restore it would be a file from outside the
+    device opened straight into LiteDB. Preferences are cheap to lose (INV-SET-P6); this is not.
+  -->
+  <application android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@mipmap/appicon" android:label="@string/app_name" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true" android:theme="@style/AppTheme">
   </application>
-  <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

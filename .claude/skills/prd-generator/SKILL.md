@@ -1,6 +1,6 @@
 ---
 name: prd-generator
-description: Write a requirements doc for a FigureDrawing feature — an FD ticket in docs/tickets, or a longer PRD for a multi-ticket feature. Use when the user asks to "create a PRD", "write requirements", "spec this feature", "write a ticket", or "document a feature" before implementation. Produces docs that use the repo's ubiquitous language, place the work in a bounded context, split it across Core/Android, and name its test tier.
+description: Write a requirements doc for a FigureDrawing feature — an FD ticket in docs/prds, or a longer PRD for a multi-ticket feature. Use when the user asks to "create a PRD", "write requirements", "spec this feature", "write a ticket", or "document a feature" before implementation. Produces docs that use the repo's ubiquitous language, place the work in a bounded context, split it across Core/Android, and name its test tier.
 ---
 
 # PRD Generator — FigureDrawing
@@ -21,19 +21,19 @@ them is wrong, not visionary.
 
 | User asks for | Write | Where |
 |---|---|---|
-| one story, fits one implementation pass | **FD ticket** | `docs/tickets/FD-0NN-<slug>.md` |
-| a feature spanning several tickets | **Feature PRD** + child ticket stubs | `docs/tickets/FD-0NN-<slug>.md` (PRD) + one file per child |
-| "quick spec", "one-pager", exploration | **One-pager** — problem, approach, acceptance criteria only | scratchpad, or `docs/tickets/` if it will be built |
-| a rework of existing behaviour | **FD ticket** citing the invariants it changes | `docs/tickets/` |
+| one story, fits one implementation pass | **FD ticket** | `docs/prds/FD-0NN-<slug>.md` |
+| a feature spanning several tickets | **Feature PRD** + child ticket stubs | `docs/prds/FD-0NN-<slug>.md` (PRD) + one file per child |
+| "quick spec", "one-pager", exploration | **One-pager** — problem, approach, acceptance criteria only | scratchpad, or `docs/prds/` if it will be built |
+| a rework of existing behaviour | **FD ticket** citing the invariants it changes | `docs/prds/` |
 
 Default to the FD ticket. It is the format the repo already uses
-([FD-001..FD-008](../../../docs/tickets/README.md)) and it is smaller than a PRD for a reason.
+([FD-001..FD-008](../../../docs/prds/README.md)) and it is smaller than a PRD for a reason.
 
 Ticket ID = highest existing `FD-0NN` + 1. Never reuse or renumber.
 
 ## 2. Gather context
 
-Ask only what you cannot infer from the repo. Read `README.md`, `docs/tickets/README.md`, and
+Ask only what you cannot infer from the repo. Read `README.md`, `docs/prds/README.md`, and
 the relevant Core type first — half these answers are already written down.
 
 **Discovery questions:**
@@ -140,7 +140,7 @@ actually be observed:
 | Contract | "`SessionScreenContractTests` asserts the new view id exists" |
 | Suite health | "`./nx.bat run FigureDrawing.Tests:test` stays green" |
 | On-device | "a 60-image folder runs a 20-pose session with no visible stutter on the emulator" |
-| Budget | "peak decoded bitmap stays bounded by `MaxImageDimension` (1080 px)" |
+| Budget | "peak decoded bitmap keeps its long side within 2x `MaxImageDimension` (1080 px)" |
 
 Numbers still belong here — they just come from the device and the suite, not a dashboard.
 "Loads in under 2 seconds" is fine; "20% lift in engagement" is not.
@@ -154,9 +154,10 @@ what is deferred to a later FD ticket.
 **Risks** — pull from the known costs in
 [ARCHITECTURE.md §20](../../../docs/ARCHITECTURE.md) when the change goes near them:
 
-- pool crosses to the player as an intent-extra array — `TransactionTooLargeException` at roughly
-  2,000 images
-- decoding runs on the main thread inside the repaint loop; bitmaps are never recycled
+- decoding runs on the main thread, both in the repaint loop at a pose boundary and in the folder
+  walk on launch (FD-009, FD-010)
+- the pool crossing to the player is bounded by `ReferenceLibrary.Sample` (`INV-POOL-6`), so a
+  feature that widens what crosses has to re-check that bound
 - session state is not saved across process death
 - SAF folder grants are taken and never released; access can expire (`INV-GRP-5`)
 - `MainActivity` already spans three contexts — anything added there makes that worse
@@ -182,10 +183,10 @@ a decision that will be made accidentally during implementation.
 
 ## 9. Ship it
 
-1. Write the file at `docs/tickets/FD-0NN-<slug>.md` using
+1. Write the file at `docs/prds/FD-0NN-<slug>.md` using
    [references/ticket-template.md](references/ticket-template.md), or
    [references/prd-template.md](references/prd-template.md) for a multi-ticket feature.
-2. Add the row to the table in `docs/tickets/README.md`, and to the suggested order if it has
+2. Add the row to the table in `docs/prds/README.md`, and to the suggested order if it has
    dependencies.
 3. Do **not** start implementing. The PRD is the deliverable; wait for the go-ahead.
 

@@ -280,4 +280,142 @@ public class ReferenceLibraryTests
         Assert.Equal(new[] { "a", "b", "a", "b" }, seen);
         Assert.Equal(new[] { "z", "y", "x" }, library.Pool);
     }
+
+    // --- The bounded handoff (INV-POOL-6) ------------------------------------
+
+    static ReferenceLibrary LibraryOf(int imageCount)
+    {
+        var images = new DocumentEntry[imageCount];
+        for (var i = 0; i < imageCount; i++)
+            images[i] = Img($"img{i:0000}");
+
+        return new ReferenceLibrary(new FakeTree(new() { ["root"] = images }), "root");
+    }
+
+    [Fact]
+    public void Sample_ReturnsTheWholePoolWhenItFitsTheBound()
+    {
+        var library = LibraryOf(5);
+
+        Assert.Equal(library.Pool, library.Sample(5, new Random(1)));
+        Assert.Equal(library.Pool, library.Sample(50, new Random(1)));
+    }
+
+    [Fact]
+    public void Sample_BoundsTheHandoffWithoutTruncatingTheLibrary()
+    {
+        var library = LibraryOf(100);
+
+        var handoff = library.Sample(10, new Random(7));
+
+        Assert.Equal(10, handoff.Count);
+        Assert.Equal(100, library.Count);
+    }
+
+    [Fact]
+    public void Sample_KeepsEnumerationOrderAndUniqueness()
+    {
+        var library = LibraryOf(100);
+
+        var handoff = library.Sample(20, new Random(3));
+
+        Assert.Equal(handoff.Distinct().Count(), handoff.Count);
+        Assert.Equal(handoff.OrderBy(id => library.Pool.ToList().IndexOf(id)), handoff);
+    }
+
+    // A truncating handoff would only ever report the first ids the walk reached, and a biased one
+    // would favour part of the pool. Over 200 seeds every index must come up, and none of them
+    // anywhere near often enough to suggest the shuffle is lopsided.
+    [Fact]
+    public void Sample_DrawsUniformlyFromTheWholePool()
+    {
+        var library = LibraryOf(100);
+        var index = library.Pool.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
+        var hits = new int[100];
+
+        for (var seed = 0; seed < 200; seed++)
+        {
+            foreach (var id in library.Sample(10, new Random(seed)))
+                hits[index[id]]++;
+        }
+
+        Assert.DoesNotContain(hits, count => count == 0);
+
+        // Mean is 200*10/100 = 20 draws per index.
+        Assert.DoesNotContain(hits, count => count > 60);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(50)]
+    [InlineData(99)]   // the boundary: the partial shuffle runs to the end of the index array
+    [InlineData(100)]
+    public void Sample_ReturnsExactlyTheRequestedCountOfPoolMembers(int maxIds)
+    {
+        var library = LibraryOf(100);
+
+        var handoff = library.Sample(maxIds, new Random(5));
+
+        Assert.Equal(maxIds, handoff.Count);
+        Assert.All(handoff, id => Assert.Contains(id, library.Pool));
+    }
+
+    // The overload the app actually calls takes no Random.
+    [Fact]
+    public void Sample_WithoutAnInjectedRandom_StillBoundsTheHandoff()
+    {
+        var library = LibraryOf(100);
+
+        var handoff = library.Sample(10);
+
+        Assert.Equal(10, handoff.Count);
+        Assert.All(handoff, id => Assert.Contains(id, library.Pool));
+    }
+
+    // A count is not a size: ids carry the whole document path, so the handoff is bounded in
+    // characters as well (INV-POOL-6).
+    [Fact]
+    public void Sample_StopsAtTheCharacterBudget()
+    {
+        var library = LibraryOf(100);           // ids are "img0000" — 7 characters each
+        var handoff = library.Sample(100, 70, new Random(9));
+
+        Assert.Equal(10, handoff.Count);
+    }
+
+    [Fact]
+    public void Sample_WithinTheCharacterBudget_ReturnsTheWholePool()
+    {
+        var library = LibraryOf(10);
+
+        Assert.Equal(library.Pool, library.Sample(10, 1000, new Random(9)));
+    }
+
+    // One pathological id must still yield a usable pool rather than an empty one.
+    [Fact]
+    public void Sample_AlwaysTakesAtLeastOneId()
+    {
+        var library = LibraryOf(100);
+
+        Assert.Single(library.Sample(100, 1, new Random(9)));
+    }
+
+    [Fact]
+    public void Sample_YieldsNothingForANonPositiveCharacterBudget() =>
+        Assert.Empty(LibraryOf(10).Sample(10, 0, new Random(1)));
+
+    [Fact]
+    public void Sample_IsDeterministicForAGivenRandom() =>
+        Assert.Equal(LibraryOf(100).Sample(15, new Random(42)),
+                     LibraryOf(100).Sample(15, new Random(42)));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Sample_YieldsNothingForANonPositiveBound(int maxIds) =>
+        Assert.Empty(LibraryOf(10).Sample(maxIds, new Random(1)));
+
+    [Fact]
+    public void Sample_OfAnEmptyLibraryIsEmpty() =>
+        Assert.Empty(ReferenceLibrary.Empty.Sample(10, new Random(1)));
 }

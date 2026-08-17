@@ -24,7 +24,8 @@ The three costs that are real here:
 
 1. **Image decoding.** A folder of full-resolution photos is what exhausts memory. Every decode
    goes through `ImageDecoding.DecodeSampledBitmap` with a power-of-two `InSampleSize`
-   (`BitmapMath`), bounded to `MaxImageDimension` (1080 px). A decode that bypasses it, decodes at
+   (`BitmapMath.CalculateCropSampleSize`), which holds the LONG side to within 2x
+   `MaxImageDimension` (1080 px) whatever the aspect ratio is. A decode that bypasses it, decodes at
    full size, or holds more than the current bitmap is a Critical finding.
 2. **The repaint loop.** `SessionActivity` ticks every 200 ms for the whole session. Per-tick
    allocation, per-tick string formatting beyond the countdown's own, and per-tick work that could

@@ -81,6 +81,8 @@
     <string name="session_skip_image_text">Skip this image</string>
     <string name="session_end_session_text">End session</string>
 
+    <string name="session_start_failed_text">Couldn\'t start a session with that folder</string>
+
     <string name="break_kicker_text">Break</string>
     <string name="break_help_text">Next pose coming up</string>
     <string name="paused_kicker_text">Paused</string>

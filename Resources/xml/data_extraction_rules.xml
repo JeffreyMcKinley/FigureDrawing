@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's only persisted file is files/figuredrawing.db (LiteDB), which holds the settings
+  document — including LastCollection, a tree uri that embeds the path of the folder the artist
+  picked. It is excluded from both transports:
+
+    * cloud-backup     — Android Auto Backup, and `adb backup`
+    * device-transfer  — the Android 12+ device-to-device migration, which allowBackup does NOT
+                         govern, so it needs its own section here
+
+  Losing the settings costs preferences and nothing else (INV-SET-P6): a restored or migrated
+  device comes up on defaults and asks for the folder again. The database is also attacker-supplied
+  input on restore — it is opened directly by `new LiteDatabase(...)` — so keeping it out of the
+  transports closes that path too.
+-->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="file" path="figuredrawing.db" />
+    <exclude domain="file" path="figuredrawing-log.db" />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="file" path="figuredrawing.db" />
+    <exclude domain="file" path="figuredrawing-log.db" />
+  </device-transfer>
+</data-extraction-rules>

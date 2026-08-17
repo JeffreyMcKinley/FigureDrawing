@@ -86,7 +86,8 @@ nothing else.
 - `INV-IMG-3` — **Format is decided by MIME, never by extension.** Anything whose MIME type starts
   with `image/` is a reference image. No hardcoded extension list. A directory is never an image.
 - `INV-IMG-4` — **Never cached as decoded pixels beyond the current screen.** A decoded image is a
-  rendering artifact bounded by `MaxImageDimension` (1080 px), not a domain object.
+  rendering artifact, not a domain object: its LONG side is bounded to within 2x `MaxImageDimension`
+  (1080 px) whatever the aspect ratio is, and the screen that decoded it frees it.
 - `INV-POSE-1` — **A pose ends exactly once**, in exactly one of three ways: completed (timer
   expiry or manual done-tap), skipped, or cut short by ending the session.
 - `INV-POSE-2` — **A new pose gets the full configured duration.** No carry-over from the previous
@@ -114,7 +115,7 @@ has no state to keep between them.
 | **Kind** | Aggregate root over its images |
 | **Lifetime** | Persisted by reference (`Settings.LastCollection`), never by contents |
 | **State** | Root document id, display name, and the enumerated image ids in encounter order |
-| **Operations** | `Enumerate()` (re-walk the tree), `Pool` (the ordered ids), `Count` / `IsEmpty`, `RootDocumentId` / `DisplayName`, the static `Empty` (no folder picked yet — every screen's starting state) and the static classifiers `IsImage` / `IsDirectory` |
+| **Operations** | `Enumerate()` (re-walk the tree), `Pool` (the ordered ids), `Sample(maxIds[, maxTotalIdLength], random)` (the bounded handoff, `INV-POOL-6`), `Count` / `IsEmpty`, `RootDocumentId` / `DisplayName`, the static `Empty` (no folder picked yet — every screen's starting state) and the static classifiers `IsImage` / `IsDirectory` |
 
 **Mapping ids at the edge.** The constructor takes an optional `toImageId` so the adapter can turn
 each document id into the durable content URI a session draws from — the Android layer passes
@@ -141,7 +142,9 @@ and the empty state shows (`INV-GRP-4`, `INV-GRP-5`).
   permission is still held. A revoked grant is an expected outcome: fall back to the empty state,
   log, and let the user pick again. Never crash and never prompt in a loop.
 - `INV-GRP-6` — **Order is enumeration order.** The library's own order is deterministic and
-  provider-driven. Randomization belongs to the session, never here.
+  provider-driven. Randomizing the *order* belongs to the session, never here — the one random
+  choice the library makes is *which* ids cross a bounded handoff (`INV-POOL-6`), and even that
+  returns them in enumeration order.
 
 **Rules — the pool it hands over**
 
@@ -154,6 +157,14 @@ and the empty state shows (`INV-GRP-4`, `INV-GRP-5`).
   re-enumeration cannot change a running session.
 - `INV-POOL-5` — **A pool with zero images cannot start a session.** Enforced upstream by the Start
   gate (`INV-SET-3`) and defensively downstream (`INV-SES-7`).
+- `INV-POOL-6` — **A handoff may be bounded, and says so.** When the pool cannot cross a boundary
+  whole (the player receives it as an intent extra, which has a hard size limit in bytes), the
+  library hands over a uniform random sample in enumeration order, bounded by both a count and a
+  total id length (`ReferenceLibrary.Sample`). This is the one place the library chooses at random,
+  and it chooses membership, never order (`INV-GRP-6`). The library itself is never truncated —
+  membership is still whatever the tree reports (`INV-GRP-1`, `INV-GRP-2`) — and the session draws
+  from the sample as if it were the pool, so `INV-POOL-1`..`INV-POOL-4` hold unchanged on what it
+  received.
 
 **Traversal is stateless.** Classification (`IsImage`, `IsDirectory`) and the depth-first policy
 hold no state between calls, so two callers can never interfere — that property must survive the
@@ -252,8 +263,8 @@ fields the session already holds, are not independent concepts. They were six ty
 | **Lifetime** | A draft is evaluated on the setup screen; constructing one with a pool copies it and positions the session on its first displayable image; it ends at completion or `End()`. Never restarted — construct a new one |
 | **Phases** | `Draft` → `Pose` ⇄ `Break` → `Complete` |
 | **State** | Parsed setup inputs; the upcoming queue for the current pass; current image id and its loaded image; completed and skipped counts; accumulated drawing time; time left on the current phase; run/pause state |
-| **Commands** | `Next()`, `Skip()`, `End()`, `Tick()`, `Pause()`, `Resume()` |
-| **Queries** | Every phase: `Phase`, `SecondsPerImage`, `ImageCount`, `BreakSeconds`, `FolderSelected`, `Config`. Draft: `SecondsValid`, `CountValid`, `CanStart`, `EstimateSeconds`. Running: `CurrentImage`, `CurrentImageId`, `Display`, `TimeRemaining`, `SecondsRemaining`, `IsExpired`, `PhaseDuration`, `RemainingPercent`, `OnBreak`, `IsPaused`, `IsRunning`, `CompletedCount`, `SkippedCount`, `TargetCount`, `Remaining`, `CurrentPoseNumber`, `IsComplete`, `CouldNotDisplayImage`, `ImagesDisplayed`, `TotalDrawingTime`, `AveragePoseTime` |
+| **Commands** | `Next()`, `Skip()`, `End()`, `Tick()`, `Pause(PauseReason = Lifecycle)`, `Resume()` |
+| **Queries** | Every phase: `Phase`, `SecondsPerImage`, `ImageCount`, `BreakSeconds`, `FolderSelected`, `Config`. Draft: `SecondsValid`, `CountValid`, `CanStart`, `EstimateSeconds`. Running: `CurrentImage`, `CurrentImageId`, `Display`, `TimeRemaining`, `SecondsRemaining`, `IsExpired`, `PhaseDuration`, `RemainingPercent`, `OnBreak`, `IsPaused`, `PausedByUser`, `IsRunning`, `CompletedCount`, `SkippedCount`, `TargetCount`, `Remaining`, `CurrentPoseNumber`, `IsComplete`, `CouldNotDisplayImage`, `ImagesDisplayed`, `TotalDrawingTime`, `AveragePoseTime` |
 | **Statics** | `Evaluate(...)` (the draft factory) and, on the non-generic partner type, `DrawingSession.Format(seconds)` |
 
 `Remaining` counts *images* left, `TimeRemaining` counts the current phase's *time* — two different
@@ -302,8 +313,10 @@ Reading a run query off a draft is legal and meaningless — the phase says whic
   longer or shorter.
 - `INV-CD-2` — **Paused time does not count.** This is what makes backgrounding correct: a hidden
   app burns no pose time and fires no timer.
-- `INV-CD-3` — **`Pause` and `Resume` are idempotent**, and `Resume` is a no-op once expired — a
-  resume can never revive a dead pose.
+- `INV-CD-3` — **`Pause` and `Resume` are idempotent**, and a resume can never revive a dead pose:
+  resuming an expired phase leaves it expired, so the next tick retires it rather than granting more
+  time. `Resume` still clears the paused state — a phase that expired while paused must not strand
+  the session at `0:00`.
 - `INV-CD-4` — **Remaining is never negative**, and expiry is `Remaining <= 0`.
 - `INV-CD-5` — **Display rounds up.** A fresh 30 s pose reads `30` immediately and reads `0` only
   once it has actually expired. Format is `m:ss`, or `h:mm:ss` past an hour.
@@ -311,6 +324,10 @@ Reading a run query off a draft is legal and meaningless — the phase says whic
   the full configured duration (`INV-POSE-2`, `INV-POSE-3`).
 - `INV-CD-7` — **It renders text, not views.** The session produces a string; the screen owns the
   repaint loop and the `TextView`.
+- `INV-CD-8` — **A pause remembers why.** `Pause(PauseReason.User)` is the drawer's own pause and
+  survives a lifecycle pause/resume cycle; only an explicit `Resume` clears it (`PausedByUser`). The
+  screen binds the pause sheet to that, not to `IsPaused`, so backgrounding never resumes a pose the
+  drawer stopped and never leaves the sheet up over a running one.
 
 **Rules — resolving an id to an image**
 
@@ -557,6 +574,16 @@ or removed rule to be stated, so here they are:
 | `INV-SES-9` | **Corrected** | It claimed `CurrentImage` is null during a break. It never was — the next pose's image is loaded under the overlay |
 | `INV-VIEW-4` | **Weakened to match the code** | It claimed zoom resets per pose. Nothing has ever called `ResetZoom` |
 | `INV-SET-P4` | **Corrected** | Two write moments were listed; there have always been four |
+
+Changed again by the repo-wide review of 2026-08-16:
+
+| Rule | Change | Why |
+|---|---|---|
+| `INV-CD-3` | **Corrected** | It said `Resume` is a no-op once expired. It was, and that stranded the session: a pause taken in the fraction of a second after a phase hit `0:00` left `IsPaused` true forever, and `Tick` bails while paused. A resume now un-pauses without granting time, so the next tick retires the pose. Covered by `DrawingSessionCountdownTests` |
+| `INV-CD-8` | **Added** | The screen decided "did the drawer pause deliberately?" by reading a widget's `Visibility`, a lifecycle rule no test could reach. `PauseReason` / `PausedByUser` move it into the aggregate |
+| `INV-POOL-6` | **Added** | The whole pool crossed to the player as an intent extra, throwing `TransactionTooLargeException` on a DCIM-sized folder — uncaught, and reproducing on every launch because the folder is persisted |
+| `INV-GRP-6` | **Narrowed** | It said randomization never belongs to the library. `INV-POOL-6` is one random choice made there — of membership, never of order |
+| `INV-IMG-4` | **Corrected** | It claimed decoded images were bounded to `MaxImageDimension`. The sampler bounded the *short* side, so an aspect-extreme source was effectively unbounded; the long side is now held to within 2x the ceiling |
 
 One behaviour did change, deliberately: when the consecutive-failure budget is exhausted the session
 now banks **no** partial time for the unreadable image it died on. The old `SessionPlayer` routed

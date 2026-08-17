@@ -192,8 +192,10 @@ public class DrawingSessionCountdownTests
         Assert.Equal(TimeSpan.FromSeconds(20), session.TimeRemaining);
     }
 
+    // INV-CD-3: a resume leaves an expired pose expired — but it must still un-pause, or the next
+    // Tick (which bails while paused) can never retire it and the screen sits at 0:00 forever.
     [Fact]
-    public void Resume_DoesNotReviveAnExpiredPose()
+    public void Resume_LeavesAnExpiredPoseExpired_ButUnpausedSoTheNextTickRetiresIt()
     {
         var (session, clock) = Start(10);
 
@@ -203,6 +205,123 @@ public class DrawingSessionCountdownTests
 
         Assert.True(session.IsExpired);
         Assert.Equal(TimeSpan.Zero, session.TimeRemaining);
+        Assert.False(session.IsPaused);
+    }
+
+    // The stranding case: paused after expiry, away for two minutes, back. The pose must retire on
+    // the next tick, and the two minutes away must not be banked as drawing time (INV-CD-2).
+    [Fact]
+    public void PausedAfterExpiry_ResumesAndRetiresThePoseOnTheNextTick()
+    {
+        var (session, clock) = Start(10);
+
+        clock.Advance(10);
+        session.Pause();
+        clock.Advance(120);
+        session.Resume();
+
+        Assert.False(session.IsPaused);
+        Assert.True(session.Tick());
+        Assert.Equal(1, session.CompletedCount);
+        Assert.True(session.TotalDrawingTime <= TimeSpan.FromSeconds(10));
+    }
+
+    // --- Why a session is paused (INV-CD-8) ----------------------------------
+
+    [Fact]
+    public void ANewSession_IsNotPausedByTheUser()
+    {
+        var (session, _) = Start();
+
+        Assert.False(session.PausedByUser);
+        Assert.False(session.IsPaused);
+    }
+
+    [Fact]
+    public void LifecyclePause_StopsTheClockWithoutClaimingTheUserAskedForIt()
+    {
+        var (session, _) = Start();
+
+        session.Pause();
+
+        Assert.True(session.IsPaused);
+        Assert.False(session.PausedByUser);
+    }
+
+    [Fact]
+    public void UserPause_IsRemembered()
+    {
+        var (session, _) = Start();
+
+        session.Pause(PauseReason.User);
+
+        Assert.True(session.IsPaused);
+        Assert.True(session.PausedByUser);
+    }
+
+    // The case the screen depends on: paused deliberately, then backgrounded. Coming back must not
+    // resume a pose the drawer stopped, so a lifecycle pause never downgrades a user pause.
+    [Fact]
+    public void ALifecyclePauseDoesNotDowngradeAUserPause()
+    {
+        var (session, _) = Start();
+
+        session.Pause(PauseReason.User);
+        session.Pause();
+
+        Assert.True(session.PausedByUser);
+    }
+
+    [Fact]
+    public void Resume_ClearsTheUserPause()
+    {
+        var (session, _) = Start();
+
+        session.Pause(PauseReason.User);
+        session.Resume();
+
+        Assert.False(session.PausedByUser);
+        Assert.False(session.IsPaused);
+    }
+
+    // Next and Skip are reachable from the rail while the pause sheet is up. Both start a pose, and
+    // a pose that has just started is not paused — the sheet must never be left over a running one.
+    [Fact]
+    public void Next_ClearsTheUserPause()
+    {
+        var (session, _) = Start();
+
+        session.Pause(PauseReason.User);
+        session.Next();
+
+        Assert.False(session.PausedByUser);
+        Assert.False(session.IsPaused);
+    }
+
+    [Fact]
+    public void Skip_ClearsTheUserPause()
+    {
+        var (session, _) = Start();
+
+        session.Pause(PauseReason.User);
+        session.Skip();
+
+        Assert.False(session.PausedByUser);
+        Assert.False(session.IsPaused);
+    }
+
+    // The sheet can never be raised over the summary: a completed session ignores both commands.
+    [Fact]
+    public void UserPause_AfterCompletion_IsANoOp()
+    {
+        var (session, _) = Start(30, count: 1);
+
+        session.Next();
+        Assert.True(session.IsComplete);
+
+        session.Pause(PauseReason.User);
+
+        Assert.False(session.PausedByUser);
     }
 
     // Every new image gets the full time back (INV-POSE-2, INV-CD-6).

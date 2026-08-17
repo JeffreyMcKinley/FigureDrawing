@@ -56,6 +56,67 @@ public class AndroidBuildTests(ITestOutputHelper output)
         Assert.Contains(removeGlob, removes);
     }
 
+    // --- The manifest -------------------------------------------------------
+
+    static readonly XNamespace Android = "http://schemas.android.com/apk/res/android";
+
+    static XElement Application =>
+        XDocument.Load(TestPaths.Path("AndroidManifest.xml")).Root!
+            .Elements("application").Single();
+
+    // The app is offline by design and two settings strings promise nothing leaves the device. A
+    // permission re-added here would ship an install-time network grant with nothing to explain it.
+    [Fact]
+    public void App_RequestsNoPermissions()
+    {
+        var permissions = XDocument.Load(TestPaths.Path("AndroidManifest.xml")).Root!
+            .Elements("uses-permission")
+            .Select(e => e.Attribute(Android + "name")?.Value)
+            .ToList();
+
+        Assert.Empty(permissions);
+    }
+
+    // The settings database holds LastCollection — the artist's own folder path — and on restore it
+    // would be an outside file opened straight into LiteDB. allowBackup covers cloud and adb backup
+    // on every supported API; dataExtractionRules is the only lever over Android 12+ device
+    // transfer, so both are load-bearing.
+    [Fact]
+    public void App_DoesNotBackUpItsData()
+    {
+        Assert.Equal("false", Application.Attribute(Android + "allowBackup")?.Value);
+        Assert.Equal("@xml/data_extraction_rules",
+            Application.Attribute(Android + "dataExtractionRules")?.Value);
+    }
+
+    // The rules exclude by filename, so a renamed database silently starts shipping through both
+    // transports. Tie the rule to the name the app actually opens.
+    [Fact]
+    public void DataExtractionRules_ExcludeTheSettingsDatabaseFromBothTransports()
+    {
+        var rules = XDocument.Load(TestPaths.Path("Resources", "xml", "data_extraction_rules.xml"));
+
+        var databaseName = System.Text.RegularExpressions.Regex.Match(
+            File.ReadAllText(TestPaths.Path("MainActivity.cs")),
+            @"DatabaseFileName\s*=\s*""(?<name>[^""]+)""").Groups["name"].Value;
+
+        Assert.False(string.IsNullOrEmpty(databaseName),
+            "MainActivity no longer declares DatabaseFileName; this test cannot pin the rules.");
+
+        // LiteDB writes through a "<name>-log<ext>" sidecar that carries the same document.
+        var log = Path.GetFileNameWithoutExtension(databaseName) + "-log" +
+                  Path.GetExtension(databaseName);
+
+        foreach (var section in new[] { "cloud-backup", "device-transfer" })
+        {
+            var excluded = rules.Root!.Elements(section).Single().Elements("exclude").ToList();
+
+            Assert.All(excluded, e => Assert.Equal("file", e.Attribute("domain")?.Value));
+            Assert.Contains(databaseName, excluded.Select(e => e.Attribute("path")?.Value));
+            Assert.Contains(log, excluded.Select(e => e.Attribute("path")?.Value));
+        }
+    }
+
     // Asserts the signed APK the build produces. If the app has never been built on this machine
     // the output dir is absent — skip rather than fail (a plain `nx test` doesn't build Android).
     [Fact]

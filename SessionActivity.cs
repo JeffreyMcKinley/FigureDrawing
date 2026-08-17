@@ -26,8 +26,12 @@ namespace FigureDrawing
     // ConfigurationChanges: a fold opening or closing is handled in place rather than by recreating
     // the Activity. Recreation would restart the current pose (session state is not persisted -
     // docs/ARCHITECTURE.md §5), which is exactly what a drawer must not lose mid-session.
+    // Exported = false is the platform default for an Activity with no intent filter; it is stated
+    // rather than inherited because the extras this screen trusts (the pool, the config) are only
+    // safe while nothing outside the app can supply them.
     [Activity(
         Label = "@string/app_name",
+        Exported = false,
         Theme = "@style/AppTheme.NoActionBar",
         ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.SmallestScreenSize
             | ConfigChanges.ScreenLayout | ConfigChanges.Orientation | ConfigChanges.KeyboardHidden)]
@@ -111,6 +115,14 @@ namespace FigureDrawing
         Java.Lang.IRunnable tickRunnable = null!;
         bool ticking;
 
+        // The countdown string currently in the timer views. Display only changes once a second, so
+        // caching it keeps four of every five ticks from calling setText and forcing a layout pass.
+        string? lastDisplay;
+
+        // The bitmap currently attached to `image`. This screen owns it: nothing else holds a
+        // reference, so it must free the pixels when it repoints the view or goes away.
+        Bitmap? displayed;
+
         // Session inputs, kept so "Run it again" can rebuild an identical session.
         string[] pool = Array.Empty<string>();
         int secondsPerImage;
@@ -185,7 +197,9 @@ namespace FigureDrawing
         {
             base.OnResume();
 
-            if (session.IsComplete || pauseOverlay.Visibility == ViewStates.Visible)
+            // A pause the drawer asked for is remembered by the session itself, so returning from
+            // the background cannot restart a pose that was deliberately stopped.
+            if (session.IsComplete || session.PausedByUser)
                 return;
 
             session.Resume();
@@ -201,6 +215,12 @@ namespace FigureDrawing
             tone?.Release();
             tone?.Dispose();
             tone = null;
+
+            // Null-safe: OnCreate can throw before BindViews runs, and a teardown that NREs would
+            // mask the original failure and leak the bitmap it came here to free.
+            image?.SetImageDrawable(null);
+            ReleaseDisplayed();
+
             base.OnDestroy();
         }
 
@@ -283,6 +303,7 @@ namespace FigureDrawing
                 onUnreadable: id => Log.Warn(LogTag, $"Skipping unreadable image {id}"));
 
             tools = new ViewerTools(startGrayscale);
+            lastDisplay = null;
 
             BuildPips();
             ApplyTools();
@@ -304,7 +325,7 @@ namespace FigureDrawing
             if (session.IsComplete)
                 return;
 
-            session.Pause();
+            session.Pause(PauseReason.User);
             StopTicking();
             Render();
         }
@@ -335,8 +356,12 @@ namespace FigureDrawing
 
             if (session.Tick())
             {
-                // The phase changed: a new pose, a break, or the end of the session.
-                Chime();
+                // The phase changed: a new pose, a break, or the end of the session. Only a pose
+                // change chimes — a rest starting is not a new pose (the image under the overlay is
+                // the next pose's), and Chime() already ignores completion.
+                if (!session.OnBreak)
+                    Chime();
+
                 Render();
             }
             else
@@ -391,13 +416,36 @@ namespace FigureDrawing
             summary.Visibility = ViewStates.Gone;
             status.Visibility = ViewStates.Gone;
 
-            if (session.CurrentImage is { } bitmap)
+            // Repoint the view FIRST, then free the pixels the view no longer draws. The reference
+            // check is load-bearing: Render re-runs on every command, pause and pip repaint with the
+            // same bitmap, and recycling the one on screen would blank the pose.
+            if (session.CurrentImage is { } bitmap && !ReferenceEquals(bitmap, displayed))
+            {
                 image.SetImageBitmap(bitmap);
+                ReleaseDisplayed();
+                displayed = bitmap;
+            }
 
             breakOverlay.Visibility = session.OnBreak ? ViewStates.Visible : ViewStates.Gone;
 
             var paused = session.IsPaused;
-            pauseOverlay.Visibility = paused ? ViewStates.Visible : ViewStates.Gone;
+
+            // The sheet follows the *reason*: a lifecycle pause stops the clocks without covering
+            // the pose, only the drawer's own pause raises it.
+            var pausedByUser = session.PausedByUser;
+            pauseOverlay.Visibility = pausedByUser ? ViewStates.Visible : ViewStates.Gone;
+
+            if (pausedByUser)
+            {
+                // Only path that can make the sheet visible, so its text is written here rather than
+                // five times a second in RenderClock.
+                pausedTimer.Text = session.Display;
+                pausedStats.Text = string.Format(
+                    GetString(Resource.String.paused_stats_format),
+                    string.Format(GetString(Resource.String.session_progress_format),
+                        session.CurrentPoseNumber, session.TargetCount),
+                    FormatDuration(session.TotalDrawingTime));
+            }
 
             progressLabel.Text = string.Format(
                 GetString(Resource.String.session_progress_format),
@@ -408,26 +456,37 @@ namespace FigureDrawing
                 FormatDuration(session.TotalDrawingTime), session.SkippedCount);
 
             RenderPips();
+
+            // A full repaint rewrites the clock views unconditionally: the cache is keyed on the
+            // string alone, and a phase change can arrive carrying the same one the pose ended on
+            // (a done-tap at 0:15 into a 15 s break), which would otherwise leave the break timer
+            // showing the layout placeholder. Costs one setText per command, not per tick.
+            lastDisplay = null;
             RenderClock();
 
             if (!paused)
                 StartTicking();
         }
 
-        // The cheap per-tick repaint: only the things that change every 200ms.
+        // The cheap per-tick repaint: only the things that change every 200ms. The countdown string
+        // is second-resolution, so it is written only when it actually changes — setText on these
+        // wrap_content clock views requests a layout pass, and four ticks in five carry no news.
         void RenderClock()
         {
-            var display = session.Display;
-            timer.Text = display;
-            breakTimer.Text = display;
-            pausedTimer.Text = display;
+            // ProgressBar.setProgress already no-ops on an unchanged value and never lays out.
             ring.Progress = session.RemainingPercent;
 
-            pausedStats.Text = string.Format(
-                GetString(Resource.String.paused_stats_format),
-                string.Format(GetString(Resource.String.session_progress_format),
-                    session.CurrentPoseNumber, session.TargetCount),
-                FormatDuration(session.TotalDrawingTime));
+            var display = session.Display;
+            if (display == lastDisplay)
+                return;
+
+            lastDisplay = display;
+            timer.Text = display;
+
+            // The break's own timer gets the tick that entered the break too: Render calls through
+            // here on the phase change, when OnBreak is already true.
+            if (session.OnBreak)
+                breakTimer.Text = display;
         }
 
         // The session is over: either nothing in the pool could be decoded (an error), or it ran to
@@ -435,6 +494,12 @@ namespace FigureDrawing
         void RenderTerminalState()
         {
             body.Visibility = ViewStates.Gone;
+
+            // Nothing draws the pose from here on. Freeing it now keeps a summary screen from
+            // sitting on a full-size bitmap, and keeps "Run it again" from peaking at two — the new
+            // session decodes its first image inside its constructor.
+            image.SetImageDrawable(null);
+            ReleaseDisplayed();
 
             if (session.CouldNotDisplayImage)
             {
@@ -561,6 +626,7 @@ namespace FigureDrawing
                 if (uri is null)
                     return null;
 
+                // Same value twice: on the pose the quality floor and the memory ceiling coincide.
                 return ImageDecoding.DecodeSampledBitmap(
                     ContentResolver!, uri, MaxImageDimension, MaxImageDimension);
             }
@@ -569,6 +635,21 @@ namespace FigureDrawing
                 Log.Warn(LogTag, $"Failed to decode {id}: {ex.Message}");
                 return null;
             }
+        }
+
+        // The screen owns the decoded pose (docs/ARCHITECTURE.md §8: a screen disposes what it owns).
+        // Nulling the field is what keeps the OnDestroy path and the "Run it again" rebuild from
+        // recycling the same bitmap twice.
+        void ReleaseDisplayed()
+        {
+            if (displayed is null)
+                return;
+
+            if (!displayed.IsRecycled)
+                displayed.Recycle();
+
+            displayed.Dispose();
+            displayed = null;
         }
 
         static ColorMatrixColorFilter MakeGrayscaleFilter()

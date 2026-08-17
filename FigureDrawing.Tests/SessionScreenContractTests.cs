@@ -122,6 +122,24 @@ public class SessionScreenContractTests
             $"{id} must be declared after session_image so it draws on top of the pose.");
     }
 
+    // The pause sheet must consume the touches that miss its buttons. Without this a stray tap on
+    // the dimmed sheet falls through to session_image, whose click counts the pose and cancels the
+    // pause. Not focusable: a focusable container takes D-pad/TalkBack focus ahead of Resume.
+    [Fact]
+    public void PauseOverlay_ConsumesTouchesThatMissItsButtons()
+    {
+        var overlay = Element("session_pause_overlay");
+
+        Assert.Equal("true", overlay.Attribute(Android + "clickable")?.Value);
+        Assert.NotEqual("true", overlay.Attribute(Android + "focusable")?.Value);
+    }
+
+    // The break overlay must NOT consume them: tapping through it is the documented way to end a
+    // rest early (INV-SES-10).
+    [Fact]
+    public void BreakOverlay_LetsATapThrough() =>
+        Assert.NotEqual("true", Element("session_break_overlay").Attribute(Android + "clickable")?.Value);
+
     // Every overlay starts hidden: the pose is what the screen opens on.
     [Theory]
     [InlineData("session_grid")]

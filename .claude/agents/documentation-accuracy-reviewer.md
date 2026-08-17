@@ -17,7 +17,7 @@ Unless the caller names specific files, review the changed code (`git diff`, `gi
 - `AGENTS.md`, `CLAUDE.md` — agent-facing instructions
 - `docs/ARCHITECTURE.md` — physical layering (§1–14) and domain architecture (§15–21)
 - `docs/DOMAIN-MODEL.md` — per-object rules and numbered invariants
-- `docs/tickets/` — per-story tickets with acceptance criteria
+- `docs/prds/` — requirements docs for planned work, with acceptance criteria
 - `.claude/agents/*.md` — the reviewer agents' own architecture rules
 - XML doc comments and the in-file comments on Core types, which carry the *why* behind each rule
 

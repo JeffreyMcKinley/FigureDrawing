@@ -42,9 +42,28 @@ namespace FigureDrawing.Data
                 // Losing the database costs preferences and nothing else (INV-SET-P6). A file left
                 // corrupt by a kill mid-write would otherwise fail every launch from here on, so it
                 // is discarded and reopened from defaults rather than thrown at the screen.
-                File.Delete(databasePath);
+                Discard(databasePath);
                 return Read(databasePath);
             }
+        }
+
+        // Delete the datafile AND the write-ahead log beside it. LiteDB writes through
+        // "<name>-log<ext>" and only folds it back on checkpoint, so a log left by a process kill
+        // outlives the datafile it belongs to. Deleting one without the other lets a stale — or, on
+        // a restored device, a foreign — log be recovered into the fresh database, which is how a
+        // document nobody in this app wrote ends up being deserialized (INV-STO-1: this type is the
+        // only one that may touch these files).
+        static void Discard(string databasePath)
+        {
+            File.Delete(databasePath);
+
+            var log = Path.Combine(
+                Path.GetDirectoryName(databasePath) ?? string.Empty,
+                Path.GetFileNameWithoutExtension(databasePath) + "-log" +
+                Path.GetExtension(databasePath));
+
+            if (File.Exists(log))
+                File.Delete(log);
         }
 
         static Settings Read(string databasePath)

@@ -45,6 +45,15 @@ public class SessionE2ETests
 
         public bool Ticking { get; private set; }
 
+        // The pause sheet, which the screen binds to the session's own reason rather than to
+        // IsPaused — a lifecycle pause stops the clocks without covering the pose (INV-CD-8).
+        public bool PauseSheetVisible => Session.PausedByUser;
+
+        // How many times the screen would have played the pose-change tone. Only an automatic
+        // change into a POSE chimes: a rest starting is not a new pose, and a finished session is
+        // not a pose at all.
+        public int Chimes { get; private set; }
+
         public TimeSpan TickInterval { get; } = TimeSpan.FromMilliseconds(200);
 
         // What the timer view currently reads, recorded on every repaint.
@@ -63,7 +72,20 @@ public class SessionE2ETests
             DisplayedTimes.Add(Session.Display);
 
             if (Session.Tick())
+            {
+                if (!Session.OnBreak)
+                    Chime();
+
                 Render();
+            }
+        }
+
+        void Chime()
+        {
+            if (Session.IsComplete)
+                return;
+
+            Chimes++;
         }
 
         // A manual "done" tap: count the pose. The session hands the next one a full clock itself.
@@ -79,15 +101,48 @@ public class SessionE2ETests
             Render();
         }
 
+        // The rail's Skip. Reachable while the pause sheet is up — the sheet covers the stage, not
+        // the rail — so it is also the path that must not leave the sheet over a running pose.
+        public void Skip()
+        {
+            if (Session.IsComplete)
+                return;
+
+            Session.Skip();
+            Render();
+        }
+
+        // The pause sheet's own button.
+        public void UserPause()
+        {
+            if (Session.IsComplete)
+                return;
+
+            Session.Pause(PauseReason.User);
+            Ticking = false;
+            Render();
+        }
+
+        public void UserResume()
+        {
+            if (Session.IsComplete)
+                return;
+
+            Session.Resume();
+            Render();
+        }
+
         public void OnPause()
         {
             Session.Pause();
             Ticking = false;
         }
 
+        // Foregrounded again. A session that is over, or that the drawer paused deliberately, stays
+        // as it is — coming back from the background must not restart a pose nobody resumed.
         public void OnResume()
         {
-            if (Session.CurrentImage is null)
+            if (Session.IsComplete || Session.PausedByUser)
                 return;
 
             Session.Resume();
@@ -103,7 +158,8 @@ public class SessionE2ETests
                 if (DisplayedImages.Count == 0 || DisplayedImages[^1] != id)
                     DisplayedImages.Add(id);
 
-                Ticking = true;
+                // The screen only restarts its repaint loop for a session whose clocks are running.
+                Ticking = !Session.IsPaused;
                 return;
             }
 
@@ -419,6 +475,147 @@ public class SessionE2ETests
         Run(screen, clock, TimeSpan.FromSeconds(30.4));
         Assert.True(screen.Session.IsComplete);
         Assert.Equal(2, screen.Session.ImagesDisplayed);
+    }
+
+    // --- Pausing on purpose, across the lifecycle (INV-CD-8) -------------------
+
+    // The flow the pause reason exists for: the drawer pauses, puts the phone down, the app is
+    // backgrounded and comes back. The pose must still be stopped, the sheet still up, and no time
+    // burned — only an explicit resume restarts it.
+    [Fact]
+    public void AUserPause_SurvivesBackgroundingAndReturning()
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("60", "2", folderSelected: true).Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(20));
+        Assert.Equal("0:40", screen.Session.Display);
+
+        screen.UserPause();
+        Assert.True(screen.PauseSheetVisible);
+        Assert.False(screen.Ticking);
+
+        // Backgrounded for two minutes with the sheet up, then foregrounded.
+        screen.OnPause();
+        clock.Advance(TimeSpan.FromMinutes(2));
+        screen.OnResume();
+
+        Assert.True(screen.Session.IsPaused);
+        Assert.True(screen.PauseSheetVisible);
+        Assert.False(screen.Ticking);
+        Assert.Equal("0:40", screen.Session.Display);
+        Assert.Single(screen.DisplayedImages);
+
+        // Only the drawer's own resume restarts it, with the pose intact.
+        screen.UserResume();
+        Assert.False(screen.PauseSheetVisible);
+        Assert.True(screen.Ticking);
+
+        Run(screen, clock, TimeSpan.FromSeconds(39));
+        Assert.Single(screen.DisplayedImages);
+        Run(screen, clock, TimeSpan.FromSeconds(1.4));
+        Assert.Equal(2, screen.DisplayedImages.Count);
+    }
+
+    // A lifecycle pause is not the drawer's: returning resumes the pose and the sheet never shows.
+    [Fact]
+    public void ALifecyclePause_DoesNotRaiseThePauseSheet()
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("60", "2", folderSelected: true).Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(10));
+        screen.OnPause();
+
+        Assert.True(screen.Session.IsPaused);
+        Assert.False(screen.PauseSheetVisible);
+
+        screen.OnResume();
+
+        Assert.False(screen.Session.IsPaused);
+        Assert.True(screen.Ticking);
+    }
+
+    // The rail stays live under the sheet, so its commands must take the sheet down with them —
+    // otherwise the drawer watches a frozen sheet over a pose whose clock is draining.
+    [Theory]
+    [InlineData(true)]   // rail Next
+    [InlineData(false)]  // rail Skip
+    public void ARailCommandDuringAUserPause_TakesTheSheetDown(bool useNext)
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("30", "3", folderSelected: true).Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg", "c.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(5));
+        screen.UserPause();
+        Assert.True(screen.PauseSheetVisible);
+
+        if (useNext)
+            screen.Advance();
+        else
+            screen.Skip();
+
+        Assert.False(screen.PauseSheetVisible);
+        Assert.False(screen.Session.IsPaused);
+        Assert.True(screen.Ticking);
+        Assert.Equal("0:30", screen.Session.Display);
+    }
+
+    // --- The pose-change tone -------------------------------------------------
+
+    // Only a change INTO a pose chimes. With a break configured that is one tone per boundary, not
+    // two, and the tone at a break's start would announce a pose the drawer cannot see yet.
+    [Fact]
+    public void WithBreaks_OnlyTheBreaksExitChimes()
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("30", "2", folderSelected: true, breakSeconds: 15)
+            .Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(30.4));
+        Assert.True(screen.Session.OnBreak);
+        Assert.Equal(0, screen.Chimes);            // entering the rest is not a new pose
+
+        Run(screen, clock, TimeSpan.FromSeconds(15.4));
+        Assert.False(screen.Session.OnBreak);
+        Assert.Equal(1, screen.Chimes);            // leaving it is
+
+        Run(screen, clock, TimeSpan.FromSeconds(30.4));
+        Assert.True(screen.Session.IsComplete);
+        Assert.Equal(1, screen.Chimes);            // completion is not a pose change
+    }
+
+    // Without a break every expiry is a pose change, and the last one still completes silently.
+    [Fact]
+    public void WithoutBreaks_EveryPoseChangeChimes_ExceptTheLast()
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("30", "3", folderSelected: true).Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg", "c.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(91.4));
+
+        Assert.True(screen.Session.IsComplete);
+        Assert.Equal(2, screen.Chimes);
+    }
+
+    // A manual done-tap does not chime: the drawer who tapped is already looking at the screen.
+    [Fact]
+    public void AManualAdvance_DoesNotChime()
+    {
+        var clock = new FakeClock();
+        var config = DrawingSession<string>.Evaluate("30", "3", folderSelected: true).Config!.Value;
+        var screen = new Screen(Pool("a.jpg", "b.jpg", "c.jpg"), config, clock.Read);
+
+        Run(screen, clock, TimeSpan.FromSeconds(5));
+        screen.Advance();
+
+        Assert.Equal(1, screen.Session.ImagesDisplayed);
+        Assert.Equal(0, screen.Chimes);
     }
 
     // A session with a rest between poses, run through the repaint loop: the break shows, it does

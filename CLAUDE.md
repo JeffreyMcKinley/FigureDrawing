@@ -21,7 +21,24 @@
 - The `nx-generate` skill handles generator discovery internally - don't call nx_docs just to look up generator syntax
 
 
-<!-- nx configuration end--># Architecture
+<!-- nx configuration end-->
+
+## Running Nx in THIS workspace
+
+Overrides the generic guidance above. This workspace has no `package.json`, no lockfile and no
+root `node_modules` — Nx is vendored under `.nx/installation/` and driven by a wrapper script.
+
+- Run every target as `./nx.bat run <project>:<target>` on Windows, `./nx run <project>:<target>`
+  elsewhere. Example: `./nx.bat run FigureDrawing.Tests:test`.
+- Do NOT use `pnpm nx`, `npm exec nx`, `npx nx` or `yarn nx`. pnpm is not installed, and the npm/npx
+  forms resolve a globally installed Nx against this workspace's vendored version and die with
+  `ERR_UNSUPPORTED_ESM_URL_SCHEME`.
+- There is no `node_modules/@nx/<plugin>/PLUGIN.md` to read here.
+- The one command that bypasses Nx is the emulator run:
+  `dotnet build FigureDrawing.csproj -t:RunEmulator` — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §12.
+
+# Architecture
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing code. It defines the Core/Android
 split, the rules for crossing that boundary, threading and lifecycle requirements, the three-tier

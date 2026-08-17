@@ -2,7 +2,7 @@
 
 How this codebase is organized and the rules changes must hold to. Written for agents and
 contributors reviewing or extending the app. Product scope lives in the root [README](../README.md);
-per-story work lives in [docs/tickets](tickets/README.md).
+planned work lives in [docs/prds](prds/README.md).
 
 > Derived from the code as of FD-005. Where a rule below is marked **(confirm)** it was inferred
 > from existing code rather than stated anywhere — correct it if the intent differs.
@@ -68,7 +68,9 @@ separate concepts is [DOMAIN-MODEL.md §1](DOMAIN-MODEL.md) and [§9](DOMAIN-MOD
 
 Core types are deterministic and side-effect free apart from `Settings`. They expose state as
 properties for the screen to read (`CurrentImage`, `Remaining`, `IsComplete`, `Display`) and accept
-commands as methods (`Next`, `Skip`, `End`, `Pause`, `Resume`, `Restart`).
+commands as methods (`Next`, `Skip`, `End`, `Tick`, `Pause`, `Resume`). Starting a session is the
+running constructor, not a command — there is no public `Start` and no public `Restart`; restarting
+the clock is internal (`RestartCountdown`).
 
 ### Android — screens only
 
@@ -163,14 +165,24 @@ under test.
 
 ## 8. Lifecycle and resources
 
-- `OnPause` freezes the pose clock and stops the repaint loop; `OnResume` restores both. A
-  backgrounded app must not burn pose time or fire a timer while hidden.
+- `OnPause` freezes the pose clock and stops the repaint loop; `OnResume` restores both, unless the
+  drawer's own pause is still in effect (`INV-CD-8`). A backgrounded app must not burn pose time or
+  fire a timer while hidden, and must not come back running from a pause the drawer asked for.
 - `OnDestroy` stops the loop, clears `KeepScreenOn`, and disposes anything it owns.
 - Every queued callback must be removable, and every listener attached to a long-lived object must
   be detached.
-- Images are always decoded through `ImageDecoding.DecodeSampledBitmap`, bounded to
-  `MaxImageDimension` (1080 px). Never call `SetImageURI` or decode at full resolution — a folder of
-  real photos will exhaust memory.
+- Images are always decoded through `ImageDecoding.DecodeSampledBitmap`, never via `SetImageURI`.
+  It picks a power-of-two `InSampleSize` (`BitmapMath.CalculateCropSampleSize`) from two rules: a
+  request floor, which keeps the SHORT side at or above the requested size for centre-cropped tiles
+  (360 px, `MainActivity.ThumbnailDimension`), and a ceiling, which holds the LONG side to within 2x
+  the ceiling passed in — `MaxImageDimension` (1080 px) for a pose, `MaxThumbnailDimension` (720 px)
+  for a preview tile — whatever the aspect ratio is. Power-of-two sampling is what leaves the 2x
+  slop, so budget from twice the nominal dimension (a 4000x4000 photo decodes to 2000x2000); a
+  12000x900 panorama decodes at 1500x112 rather than at full width. Never decode unsampled — a
+  folder of real photos will exhaust memory.
+- A screen owns the bitmaps it decoded: repointing an `ImageView` recycles the one it replaces, and
+  `OnDestroy` detaches and frees whatever is still attached. A JNI global ref keeps a Bitmap alive
+  until a managed GC plus finalizer pass, which is far too late under a session's decode rate.
 - A single unreadable image must never sink the screen: decode failures return `null` and are
   logged, and the session skips past them with a bounded failure budget.
 
@@ -390,7 +402,7 @@ change:
 
 **Aggregate root: `DrawingSession<TImage>`.** It is the consistency boundary for everything about
 the run — the upcoming queue, `CompletedCount`, the drawing-time total and both clocks are only ever
-mutated through `Next` / `Skip` / `End` / `Tick` / `Pause` / `Resume`, and no caller can observe them
+mutated through `Next` / `Skip` / `End` / `Tick` / `Pause(PauseReason)` / `Resume`, and no caller can observe them
 mid-transition. Its identity is positional (one live session per player screen), so it carries no
 id: a session is never stored, never compared, and never resumed. That is the reason it has no
 repository, and adding one would be the signal that the model changed, not a convenience.
@@ -400,6 +412,7 @@ repository, and adding one would be the signal that the model changed, not a con
 | `DrawingSession<TImage>` | Aggregate root, entity | Owns the draft, the sequence, the counts, both clocks, the break, image resolution and the totals |
 | `SessionConfig` | Value object (`readonly record struct`) | Immutable, validated upstream |
 | `SessionPhase` | Enum | `Draft` → `Pose` ⇄ `Break` → `Complete` |
+| `PauseReason` | Enum | Why the clocks stopped: `Lifecycle` (screen hidden) vs `User` (the drawer asked). `INV-CD-8` |
 | `ViewerTools` | Entity | Owns the viewing aids and the zoom range; touches nothing the session counts |
 | image id (`string`) | Primitive standing in for a value object | See "candidate: `ImageRef`" below |
 
@@ -577,11 +590,15 @@ Live findings, ordered by how much they cost. None is a blocker; each has a stat
    zoom set for one pose is still applied to the next. `INV-VIEW-4` was written to match the code
    rather than the other way round; wiring the reset into the phase change is a one-line UX decision
    nobody has made.
-7. **Known Android-layer costs, all pre-dating the consolidation** — the pool crosses to the player
-   as an intent-extra array (a `TransactionTooLargeException` waits at roughly 2,000 images), image
-   decoding runs on the main thread inside the repaint loop, decoded bitmaps are never recycled, and
-   persisted folder grants are taken and never released. None is a Core concern and none is new; §7
-   already names background decoding as the first candidate for async work.
+7. **Known Android-layer costs, all pre-dating the consolidation** — image decoding runs on the main
+   thread, both in the repaint loop at a pose boundary and in the folder walk on launch, and
+   persisted folder grants are taken and never released. None is a Core concern and none is new; the
+   two decoding costs are specified in [FD-009](prds/FD-009-async-reference-library.md) and
+   [FD-010](prds/FD-010-pose-decode-off-the-tick.md).
+
+   Two entries that used to sit here are closed: the pool no longer crosses to the player whole (it
+   is sampled to a bounded handoff, `INV-POOL-6`), and decoded bitmaps are now recycled by the screen
+   that decoded them.
 
 ## 21. Testing the model, and what "done" looks like
 

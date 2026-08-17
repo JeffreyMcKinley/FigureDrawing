@@ -20,6 +20,18 @@ public enum SessionPhase
     Complete
 }
 
+// Why a session's clocks were stopped. The screen needs the distinction: a lifecycle pause (the app
+// went to the background) resumes itself when the screen comes back, while a pause the drawer asked
+// for must survive backgrounding and only end on an explicit Resume.
+public enum PauseReason
+{
+    // The screen was hidden — backgrounded, or covered by another Activity.
+    Lifecycle,
+
+    // The drawer tapped Pause.
+    User
+}
+
 // Non-generic partner of DrawingSession<TImage> (same name, different arity) for the one thing
 // callers need without an image type: formatting a duration the way the timer reads it.
 public static class DrawingSession
@@ -93,6 +105,9 @@ public sealed class DrawingSession<TImage> where TImage : class
 
     // When the countdown's current run segment started, or null while paused.
     TimeSpan? _countdownRunningSince;
+
+    // Whether the current pause was asked for by the drawer rather than forced by the lifecycle.
+    bool _pausedByUser;
 
     // --- Run state: resolving an id to an image -------------------------------
 
@@ -254,6 +269,11 @@ public sealed class DrawingSession<TImage> where TImage : class
     // True while paused by the lifecycle (or an explicit pause).
     public bool IsPaused => _countdownRunningSince is null;
 
+    // True while the *drawer* asked for the pause, as opposed to the screen being hidden. Only an
+    // explicit Resume clears it, so backgrounding and returning cannot silently restart a pose the
+    // drawer stopped (INV-CD-8). The pause sheet is bound to this, not to IsPaused.
+    public bool PausedByUser => _pausedByUser;
+
     // True while time is actually draining (not paused, not expired, not over).
     public bool IsRunning => !IsComplete && !IsPaused && TimeRemaining > TimeSpan.Zero;
 
@@ -399,22 +419,31 @@ public sealed class DrawingSession<TImage> where TImage : class
     // Lifecycle: freeze both clocks while the screen is hidden or the pause overlay is up, so a
     // backgrounded app burns no pose time, cannot fire a timer while it is not on screen, and does
     // not bank the time it spent away as drawing time. Idempotent (INV-CD-3).
-    public void Pause()
+    //
+    // reason: why the clocks stopped. A User pause is remembered until Resume, so a user pause that
+    // is then backgrounded does not come back as a running session (INV-CD-8); a Lifecycle pause
+    // never clears a user pause already in effect.
+    public void Pause(PauseReason reason = PauseReason.Lifecycle)
     {
         if (Phase is SessionPhase.Draft or SessionPhase.Complete)
             return;
+
+        if (reason == PauseReason.User)
+            _pausedByUser = true;
 
         PauseCountdown();
         PauseSessionClock();
     }
 
-    // Unfreeze both clocks. Idempotent, and a no-op once complete or expired — a resume can never
-    // revive a dead pose (INV-CD-3).
+    // Unfreeze both clocks. Idempotent. Resuming an expired phase cannot revive it (elapsed only
+    // grows and TimeRemaining clamps at zero) but it does clear IsPaused, so the next Tick retires
+    // the pose instead of leaving the screen frozen at 0:00 (INV-CD-3).
     public void Resume()
     {
         if (Phase is SessionPhase.Draft or SessionPhase.Complete)
             return;
 
+        _pausedByUser = false;
         ResumeCountdown();
 
         // A break runs its own clock; the session's stays stopped until the next pose starts.
@@ -452,6 +481,12 @@ public sealed class DrawingSession<TImage> where TImage : class
     void StartPose()
     {
         Phase = SessionPhase.Pose;
+
+        // A pose that has just started is not paused, whoever asked for it. Commands reachable from
+        // outside the pause sheet (the rail's Next and Skip) land here, and leaving the flag set
+        // would strand the sheet over a pose whose clock is already draining (INV-CD-8).
+        _pausedByUser = false;
+
         ResumeSessionClock();
         RestartCountdown(_poseDuration);
     }
@@ -593,7 +628,7 @@ public sealed class DrawingSession<TImage> where TImage : class
 
     void ResumeCountdown()
     {
-        if (_countdownRunningSince is not null || IsExpired)
+        if (_countdownRunningSince is not null)
             return;
 
         _countdownRunningSince = _now();

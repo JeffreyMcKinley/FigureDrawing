@@ -3,6 +3,10 @@ name: nx-import
 description: Import, merge, or combine repositories into an Nx workspace using nx import. USE WHEN the user asks to adopt Nx across repos, move projects into a monorepo, or bring code/history from another repository.
 ---
 
+> **This workspace:** there is no package manager here — run every Nx command through the
+> vendored wrapper (`./nx.bat` on Windows, `./nx` elsewhere). The `npx nx` / `pnpm nx` forms below
+> and in the reference files fail with `ERR_UNSUPPORTED_ESM_URL_SCHEME`.
+
 ## Quick Start
 
 - `nx import` brings code from a source repository or folder into the current workspace, preserving commit history.

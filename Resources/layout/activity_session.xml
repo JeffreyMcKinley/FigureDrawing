@@ -103,7 +103,12 @@
                     android:text="@string/break_help_text" />
             </LinearLayout>
 
-            <!-- Paused: the clock is frozen and the three exits from a pose are spelled out. -->
+            <!--
+              Paused: the clock is frozen and the three exits from a pose are spelled out.
+              clickable so a touch that misses the buttons is consumed here instead of falling
+              through to session_image, whose click counts the pose and cancels the pause. Not
+              focusable: a focusable container would take D-pad/TalkBack focus ahead of Resume.
+            -->
             <LinearLayout
                 android:id="@+id/session_pause_overlay"
                 android:layout_width="match_parent"
@@ -112,6 +117,7 @@
                 android:gravity="center"
                 android:padding="@dimen/space_8"
                 android:background="@color/overlay_pause"
+                android:clickable="true"
                 android:visibility="gone">
 
                 <TextView

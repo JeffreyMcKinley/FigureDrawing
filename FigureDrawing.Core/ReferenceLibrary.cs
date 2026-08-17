@@ -111,6 +111,77 @@ public sealed class ReferenceLibrary
         Pool = images.AsReadOnly();
     }
 
+    // The pool, bounded for a handoff that cannot carry all of it (INV-POOL-6). The whole pool is
+    // returned whenever it fits; past the bound a uniform random sample is taken so a 10,000-image
+    // library is not silently reduced to whatever the walk happened to reach first. Enumeration
+    // order is preserved within the sample, so the session's shuffle setting still decides the
+    // order it draws in — this decides only which images are in play.
+    //
+    // maxIds : upper bound on the number of ids, 0 or less yields an empty pool.
+    // random : injectable for deterministic tests; defaults to a shared Random.
+    public IReadOnlyList<string> Sample(int maxIds, Random? random = null) =>
+        Sample(maxIds, int.MaxValue, random);
+
+    // The same bound, expressed in characters as well as in ids. A count alone does not bound the
+    // size of the handoff: a document id carries the whole relative path, so a deep tree with long
+    // filenames runs several hundred characters per id where a shallow one runs fifty. A caller
+    // whose limit is really a byte budget passes it here and gets however many ids fit, whole.
+    //
+    // maxTotalIdLength : upper bound on the summed length of the ids returned. The first id is
+    //                    always taken when maxIds allows it, so a single pathological id yields a
+    //                    one-image pool rather than an empty one.
+    public IReadOnlyList<string> Sample(int maxIds, int maxTotalIdLength, Random? random = null)
+    {
+        if (maxIds <= 0 || maxTotalIdLength <= 0)
+            return [];
+
+        if (Pool.Count <= maxIds && TotalIdLength(Pool) <= maxTotalIdLength)
+            return Pool;
+
+        var take = Math.Min(maxIds, Pool.Count);
+        var picker = random ?? Random.Shared;
+
+        // Partial Fisher-Yates over the indices: the first `take` entries end up a uniform sample
+        // without shuffling (or copying) the whole pool.
+        var indices = new int[Pool.Count];
+        for (var i = 0; i < indices.Length; i++)
+            indices[i] = i;
+
+        for (var i = 0; i < take; i++)
+        {
+            var j = picker.Next(i, indices.Length);
+            (indices[i], indices[j]) = (indices[j], indices[i]);
+        }
+
+        // Sort only the chosen prefix, in place: the sample comes back in enumeration order.
+        Array.Sort(indices, 0, take);
+
+        var sample = new List<string>(take);
+        var length = 0L;
+
+        for (var i = 0; i < take; i++)
+        {
+            var id = Pool[indices[i]];
+            length += id.Length;
+
+            if (sample.Count > 0 && length > maxTotalIdLength)
+                break;
+
+            sample.Add(id);
+        }
+
+        return sample.AsReadOnly();
+    }
+
+    static long TotalIdLength(IReadOnlyList<string> ids)
+    {
+        var total = 0L;
+        foreach (var id in ids)
+            total += id.Length;
+
+        return total;
+    }
+
     public static bool IsDirectory(string? mimeType) => mimeType == DirectoryMimeType;
 
     // Any tree entry whose MIME type starts with "image/" (jpg/png/webp/gif/heic/...). A

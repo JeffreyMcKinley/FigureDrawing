@@ -5,5 +5,5 @@ description: Find and add Nx plugins. USE WHEN user wants to discover available 
 
 ## Finding and Installing new plugins
 
-- List plugins: `pnpm nx list`
-- Install plugins `pnpm nx add <plugin>`. Example: `pnpm nx add @nx/react`.
+- List plugins: `./nx.bat list` (this workspace has no package manager — never `pnpm nx` / `npx nx`)
+- Install plugins `./nx.bat add <plugin>`. Example: `./nx.bat add @nx/react`.
