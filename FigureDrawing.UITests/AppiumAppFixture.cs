@@ -36,6 +36,13 @@ public sealed class AppiumAppFixture : IDisposable
             options.AddAdditionalAppiumOption("autoGrantPermissions", true);
             options.AddAdditionalAppiumOption("newCommandTimeout", 120);
 
+            // The player screen repaints the countdown every 200ms, so its window is never "idle".
+            // UiAutomator2 waits for idle before each lookup (10s by default), which on that screen
+            // means every find stalls for the full timeout and then reports the snapshot taken when
+            // the wait began — a countdown that appears frozen, and tests that take minutes. Nothing
+            // here needs the idle wait: every screen is correct to read at any instant.
+            options.AddAdditionalAppiumOption("settings[waitForIdleTimeout]", 0);
+
             Driver = new AndroidDriver(UiTestEnvironment.ServerUri, options, TimeSpan.FromMinutes(3));
             Driver.Manage().Timeouts().ImplicitWait = TimeSpan.FromSeconds(10);
         }

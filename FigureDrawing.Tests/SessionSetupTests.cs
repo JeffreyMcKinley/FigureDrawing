@@ -88,4 +88,88 @@ public class SessionSetupTests
         Assert.True(SessionSetup.IsValidSeconds(SessionSetup.DefaultSecondsPerImage));
         Assert.True(SessionSetup.IsValidCount(SessionSetup.DefaultImageCount));
     }
+
+    // --- Break between poses -------------------------------------------------
+
+    [Fact]
+    public void Evaluate_CarriesTheBreakIntoTheConfig()
+    {
+        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: 15);
+
+        Assert.Equal(15, state.BreakSeconds);
+        Assert.Equal(new SessionConfig(45, 12, 15), state.Config);
+    }
+
+    // The break is a pace setting, not a validated input — "no break" is a legitimate choice, so it
+    // must never be able to close the Start gate.
+    [Fact]
+    public void Evaluate_NoBreak_StillStarts()
+    {
+        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: 0);
+
+        Assert.True(state.CanStart);
+        Assert.Equal(0, state.Config!.Value.BreakSeconds);
+    }
+
+    [Fact]
+    public void Evaluate_NegativeBreak_IsFlooredAtZero()
+    {
+        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: -30);
+
+        Assert.Equal(0, state.BreakSeconds);
+    }
+
+    [Fact]
+    public void Evaluate_OmittedBreak_DefaultsToNone()
+    {
+        var state = SessionSetup.Evaluate("45", "12", folderSelected: true);
+
+        Assert.Equal(SessionSetup.DefaultBreakSeconds, state.BreakSeconds);
+    }
+
+    // --- Session length estimate ---------------------------------------------
+
+    [Theory]
+    [InlineData(30, 12, 0, 360)]        // 12 * 30s, no breaks
+    [InlineData(60, 10, 15, 735)]       // 10 * 60s + 9 breaks of 15s
+    [InlineData(30, 1, 60, 30)]         // a single pose has no break after it
+    [InlineData(30, 0, 15, 0)]          // nothing to draw, nothing to estimate
+    public void EstimateSeconds_CountsBreaksBetweenPosesOnly(
+        int seconds, int count, int breakSeconds, int expected) =>
+        Assert.Equal(expected, SessionSetup.EstimateSeconds(new SessionConfig(seconds, count, breakSeconds)));
+
+    // The estimate is shown under the Start button, which is visible before a folder is picked.
+    [Fact]
+    public void StateEstimate_IsAvailableBeforeAFolderIsPicked()
+    {
+        var state = SessionSetup.Evaluate("60", "10", folderSelected: false, breakSeconds: 15);
+
+        Assert.False(state.CanStart);
+        Assert.Equal(735, state.EstimateSeconds);
+    }
+
+    [Fact]
+    public void StateEstimate_IsZeroWhileAnInputIsInvalid()
+    {
+        Assert.Equal(0, SessionSetup.Evaluate("", "10", folderSelected: true).EstimateSeconds);
+        Assert.Equal(0, SessionSetup.Evaluate("60", "x", folderSelected: true).EstimateSeconds);
+    }
+
+    // --- Quick-pick chips ----------------------------------------------------
+
+    // The setup screen renders one chip per preset, so the presets must stay usable inputs.
+    [Fact]
+    public void SecondsPresets_AreAllValidDurations()
+    {
+        Assert.NotEmpty(SessionSetup.SecondsPresets);
+        Assert.All(SessionSetup.SecondsPresets, s => Assert.True(SessionSetup.IsValidSeconds(s)));
+        Assert.Contains(SessionSetup.DefaultSecondsPerImage, SessionSetup.SecondsPresets);
+    }
+
+    [Fact]
+    public void BreakPresets_StartAtNone_AndAreNeverNegative()
+    {
+        Assert.Equal(0, SessionSetup.BreakPresets[0]);
+        Assert.All(SessionSetup.BreakPresets, b => Assert.True(b >= 0));
+    }
 }

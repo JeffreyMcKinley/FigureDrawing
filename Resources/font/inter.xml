@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Inter — the typeface the Nocturne design system is drawn in (its styles.css imports
+  Inter:wght@400;500;600). Registering the three weights as one family means a view can ask for the
+  family and get the right cut: 400 for body, 500 for headings and buttons (the weight the design
+  system's font-heading-weight variable carries), 600 for anything bold.
+
+  Where a specific weight is wanted regardless of textStyle, reference the file directly
+  (@font/inter_medium) rather than the family — selecting a weight from a family by number needs
+  android:textFontWeight, which is API 28.
+
+  Licence: SIL Open Font Licence 1.1, see docs/third-party-licenses/Inter-OFL.txt.
+-->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="400"
+        android:font="@font/inter_regular" />
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="500"
+        android:font="@font/inter_medium" />
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="600"
+        android:font="@font/inter_semibold" />
+</font-family>

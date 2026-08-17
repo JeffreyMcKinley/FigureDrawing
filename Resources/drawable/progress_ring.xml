@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The countdown ring beside the timer. A determinate circular ProgressBar drives this: the second
+  ring is level-clipped, so its sweep follows the progress value, and the rotate starts that sweep
+  at twelve o'clock instead of three (the design's transform: rotate(-90deg)).
+
+  The screen sets progress from PoseSession.RemainingPercent, so the ring starts full and empties as
+  the pose runs out.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape
+            android:shape="ring"
+            android:innerRadiusRatio="3.2"
+            android:thicknessRatio="24"
+            android:useLevel="false">
+            <solid android:color="@color/ring_track" />
+        </shape>
+    </item>
+    <item>
+        <rotate
+            android:fromDegrees="270"
+            android:toDegrees="270"
+            android:pivotX="50%"
+            android:pivotY="50%">
+            <shape
+                android:shape="ring"
+                android:innerRadiusRatio="3.2"
+                android:thicknessRatio="24"
+                android:useLevel="true">
+                <solid android:color="@color/accent" />
+            </shape>
+        </rotate>
+    </item>
+</layer-list>

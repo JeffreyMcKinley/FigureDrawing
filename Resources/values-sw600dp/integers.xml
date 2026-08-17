@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fold open / tablet: the reference grid gets four columns (see values/integers.xml). -->
+<resources>
+    <integer name="library_columns">4</integer>
+</resources>

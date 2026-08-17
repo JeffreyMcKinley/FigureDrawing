@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nocturne palette, imported from the Claude Design project "Figure Drawing Practice App".
+  These are the design system's own tokens (_ds/nocturne-.../styles.css) transcribed to Android
+  #AARRGGBB. The CSS names are kept so the two stay comparable: the CSS variable color-bg is
+  @color/bg, and the tonal ramp steps keep their 100..900 numbering.
+
+  The colours with an alpha component are the CSS color-mix() washes the design uses for selected
+  chips, pressed buttons, and the two full-screen overlays.
+-->
+<resources>
+    <!-- Grounds -->
+    <color name="bg">#FF161826</color>
+    <color name="surface">#FF232532</color>
+    <!-- The pose stage sits a shade under the app ground so the reference image reads as a lightbox. -->
+    <color name="stage">#FF0F1119</color>
+    <color name="text">#FFE9E9ED</color>
+
+    <!-- Accent ramp -->
+    <color name="accent">#FF9184D9</color>
+    <color name="accent_200">#FFE7E5FE</color>
+    <color name="accent_300">#FFD2CEFD</color>
+    <color name="accent_400">#FFB5ABFC</color>
+    <!-- color-mix(in srgb, accent 16%/10%, transparent): selected chip fill, ghost-button press. -->
+    <color name="accent_wash">#299184D9</color>
+    <color name="accent_wash_soft">#1A9184D9</color>
+
+    <!-- Neutral ramp -->
+    <color name="neutral_300">#FFCFD3E5</color>
+    <color name="neutral_400">#FFB2B6CA</color>
+    <color name="neutral_500">#FF9397AB</color>
+    <color name="neutral_600">#FF75798C</color>
+    <color name="neutral_800">#FF3F424D</color>
+    <color name="neutral_900">#FF292B31</color>
+
+    <!-- color-mix(in srgb, text 16%, transparent) — the system's hairline divider. -->
+    <color name="divider">#29E9E9ED</color>
+
+    <!-- Overlays: rgba(22,24,38,0.92) for the break, 0.90 for the pause sheet. -->
+    <color name="overlay_break">#EB161826</color>
+    <color name="overlay_pause">#E6161826</color>
+
+    <!-- Rule-of-thirds guides over the pose: rgba(233,233,237,0.18). -->
+    <color name="grid_line">#2EE9E9ED</color>
+
+    <!-- Unfilled part of the countdown ring. -->
+    <color name="ring_track">#FF3F424D</color>
+</resources>

@@ -105,4 +105,96 @@ public class UiResourceContractTests
     [InlineData("empty_folder_text")]
     public void Strings_DeclaresFdStrings(string name) =>
         Assert.Contains(name, StringResourceNames());
+
+    // --- Claude Design import: the three tabbed panes -------------------------
+
+    // Session / Images / Settings are panes of one screen, so the tab bar and the panes it switches
+    // between must both exist. Losing either leaves a screen with no way back to the others.
+    [Theory]
+    [InlineData("pane_setup")]
+    [InlineData("pane_library")]
+    [InlineData("pane_settings")]
+    [InlineData("tab_session")]
+    [InlineData("tab_images")]
+    [InlineData("tab_settings")]
+    public void ActivityMain_DeclaresTheTabbedPanes(string id) =>
+        Assert.Contains(id, LayoutIds("activity_main"));
+
+    // Exactly one pane starts visible; the other two are gone. Two visible panes would stack their
+    // content on top of each other, which no amount of code in OnCreate would undo before it drew.
+    [Fact]
+    public void ActivityMain_StartsOnExactlyOnePane()
+    {
+        var doc = XDocument.Load(TestPaths.Path("Resources", "layout", "activity_main.xml"));
+        var panes = new[] { "pane_setup", "pane_library", "pane_settings" };
+
+        var visible = doc.Descendants()
+            .Where(e => panes.Contains(e.Attribute(Android + "id")?.Value?.Replace("@+id/", "")))
+            .Count(e => e.Attribute(Android + "visibility")?.Value != "gone");
+
+        Assert.Equal(1, visible);
+    }
+
+    // The setup pane's preset chips. One chip per SessionSetup preset, bound by position in
+    // MainActivity.BindPresetChips — a missing id would leave a preset unreachable.
+    [Theory]
+    [InlineData("chip_sec_30")]
+    [InlineData("chip_sec_60")]
+    [InlineData("chip_sec_120")]
+    [InlineData("chip_sec_300")]
+    [InlineData("chip_break_0")]
+    [InlineData("chip_break_5")]
+    [InlineData("chip_break_15")]
+    [InlineData("chip_break_60")]
+    public void ActivityMain_DeclaresThePresetChips(string id) =>
+        Assert.Contains(id, LayoutIds("activity_main"));
+
+    // The rest of the imported setup pane: the pool card, the length estimate, and the four
+    // Settings toggles.
+    [Theory]
+    [InlineData("pool_label")]
+    [InlineData("change_button")]
+    [InlineData("estimate_label")]
+    [InlineData("library_count")]
+    [InlineData("library_more")]
+    [InlineData("setting_shuffle")]
+    [InlineData("setting_awake")]
+    [InlineData("setting_chime")]
+    [InlineData("setting_grayscale")]
+    public void ActivityMain_DeclaresTheImportedControls(string id) =>
+        Assert.Contains(id, LayoutIds("activity_main"));
+
+    [Theory]
+    [InlineData("tab_session_text")]
+    [InlineData("tab_images_text")]
+    [InlineData("tab_settings_text")]
+    [InlineData("break_label_text")]
+    [InlineData("pool_ready_format")]
+    [InlineData("pool_empty_text")]
+    [InlineData("estimate_format")]
+    [InlineData("library_more_format")]
+    [InlineData("change_button_text")]
+    [InlineData("toggle_on_text")]
+    [InlineData("toggle_off_text")]
+    [InlineData("thumbnail_desc")]
+    public void Strings_DeclaresTheImportedStrings(string name) =>
+        Assert.Contains(name, StringResourceNames());
+
+    // The reference grid is a GridLayout whose column count MainActivity reads from a resource, so
+    // the fold-open variant is a resource swap rather than a code branch.
+    [Fact]
+    public void LibraryColumns_AreDeclaredForBothPhoneAndFoldOpen()
+    {
+        Assert.Equal(2, IntegerResource(Path.Combine("values", "integers.xml"), "library_columns"));
+        Assert.Equal(4, IntegerResource(Path.Combine("values-sw600dp", "integers.xml"), "library_columns"));
+    }
+
+    static int IntegerResource(string relativePath, string name)
+    {
+        var doc = XDocument.Load(TestPaths.Path("Resources", relativePath));
+        var value = doc.Root!.Elements("integer")
+            .First(e => e.Attribute("name")?.Value == name).Value;
+
+        return int.Parse(value);
+    }
 }

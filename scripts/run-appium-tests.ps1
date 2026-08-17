@@ -86,7 +86,37 @@ if (-not (Test-Path $apk)) { Die "APK not found at $apk" }
 & $adb install -r $apk 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Die "adb install failed." }
 
+# The suite asserts first-run behaviour ("No folder selected yet"), so it has to start from a device
+# that has never picked a folder. `adb install -r` keeps app data, so anything left behind by a
+# previous run - or by someone driving the app by hand - carries over: the settings document still
+# holds LastCollection, the app restores that folder on launch, and the empty-state tests fail
+# against a populated library. DocumentsUI is cleared for the same reason: the system picker
+# reopens wherever it was last used, so a stale location makes "select the default folder" select
+# the wrong one.
+Write-Host "Clearing app + picker state..." -ForegroundColor Cyan
+& $adb shell pm clear com.companyname.FigureDrawing 2>&1 | Write-Host
+foreach ($picker in @("com.google.android.documentsui", "com.android.documentsui")) {
+    & $adb shell pm clear $picker 2>&1 | Out-Null
+}
+
 # 4. Appium server + tests ------------------------------------------------------------------------
+# A server left listening by an earlier run is the worst failure mode here: this script's own
+# Start-Process dies with EADDRINUSE, but Wait-For still sees the port open, so the whole suite
+# silently runs against the stale process. Its bundled uiautomator2 server no longer matches the
+# installed app and every session dies with "The instrumentation process cannot be initialized" -
+# which reads like an app crash rather than a leftover server. Clear the port first.
+$port = ([Uri]$AppiumUrl).Port
+$stale = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+if ($stale) {
+    # NOTE: not $pid — that is an automatic read-only variable in PowerShell and assigning to it throws.
+    foreach ($owner in ($stale.OwningProcess | Select-Object -Unique)) {
+        $proc = Get-Process -Id $owner -ErrorAction SilentlyContinue
+        Write-Host "Port $port already held by PID $owner ($($proc.ProcessName), started $($proc.StartTime)); stopping it." -ForegroundColor Yellow
+        Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+    }
+    Wait-For { -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) } 30 "port $port to be released"
+}
+
 Write-Host "Starting Appium server..." -ForegroundColor Cyan
 # `appium` on PATH is a PowerShell shim (appium.ps1) which Start-Process cannot launch; use the
 # .cmd shim next to it. Server logs go to appium-server.log for debugging a failed session.
@@ -96,17 +126,36 @@ if (-not (Test-Path $appiumCmd)) { Die "appium.cmd not found at $appiumCmd" }
 $log = Join-Path $repoRoot "appium-server.log"
 $appium = Start-Process -FilePath $appiumCmd -ArgumentList "--relaxed-security" -PassThru `
     -WindowStyle Hidden -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+$testExit = 1
 try {
-    $port = ([Uri]$AppiumUrl).Port
-    Wait-For { Test-NetConnection 127.0.0.1 -Port $port -InformationLevel Quiet } 60 "Appium server"
+    # Readiness is "the server answers /status", not "something holds the port". A TCP check passes
+    # against the dying socket of the server we just replaced, and against our own process during the
+    # several seconds it spends loading the uiautomator2 driver — both let the suite start too early,
+    # and every test then fails with a bare "error occurred while sending the request".
+    Wait-For {
+        if ($appium.HasExited) { Die "Appium server exited during startup; see $log.err" }
+        try { (Invoke-WebRequest -Uri "$AppiumUrl/status" -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200 }
+        catch { $false }
+    } 90 "Appium server to answer /status"
+    Write-Host "Appium server ready." -ForegroundColor Green
 
     $env:RUN_APPIUM = "1"
     $env:APPIUM_URL = $AppiumUrl
     dotnet test (Join-Path $repoRoot "FigureDrawing.UITests\FigureDrawing.UITests.csproj") --nologo
-    exit $LASTEXITCODE
+    $testExit = $LASTEXITCODE
 }
 finally {
+    # NOTE: no `exit` inside the try. In PowerShell `exit` tears the runspace down without running
+    # finally, which is how earlier versions of this script leaked an Appium server on every run —
+    # the next run then found port 4723 held and silently drove the stale process.
+    # taskkill /T, not Stop-Process: `appium` on PATH is a .cmd shim, so the process started above is
+    # cmd.exe and the actual server is its node CHILD. Stopping just the shim leaves node holding
+    # port 4723, which is how a server survived to be found by the next run.
     Write-Host "Stopping Appium server..." -ForegroundColor Cyan
-    if ($appium -and -not $appium.HasExited) { Stop-Process -Id $appium.Id -Force }
+    if ($appium -and -not $appium.HasExited) {
+        & taskkill /T /F /PID $appium.Id 2>&1 | Out-Null
+    }
     Remove-Item Env:\RUN_APPIUM, Env:\APPIUM_URL -ErrorAction SilentlyContinue
 }
+
+exit $testExit

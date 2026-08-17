@@ -3,8 +3,16 @@ using System.Diagnostics;
 namespace FigureDrawing.Core;
 
 // A finished-session snapshot for the summary screen (FD-007): how many images counted toward the
-// total and how long was spent drawing them. TotalDrawingTime excludes time spent on skipped images.
-public readonly record struct SessionSummary(int ImagesDisplayed, TimeSpan TotalDrawingTime);
+// total, how long was spent drawing them, and how many were skipped. TotalDrawingTime excludes time
+// spent on skipped images, so AveragePoseTime is an average over completed poses only.
+public readonly record struct SessionSummary(
+    int ImagesDisplayed, TimeSpan TotalDrawingTime, int SkippedCount = 0)
+{
+    // Mean time over the poses that counted. Zero for a session that completed nothing, so the
+    // summary screen never has to special-case an empty run.
+    public TimeSpan AveragePoseTime =>
+        ImagesDisplayed > 0 ? TimeSpan.FromTicks(TotalDrawingTime.Ticks / ImagesDisplayed) : TimeSpan.Zero;
+}
 
 // FD-003 session engine. A UI-independent model that owns the state of one drawing session: the
 // random image sequence, the remaining-count, skip semantics, and elapsed-time accounting. The
@@ -27,7 +35,14 @@ public sealed class DrawingSession
     readonly Queue<string> _upcoming = new();
 
     TimeSpan _accumulatedDrawingTime;
-    TimeSpan _currentImageStart;
+
+    // Time already banked on the image currently displayed, from run segments that have ended.
+    TimeSpan _currentImageBanked;
+
+    // When the current run segment started, or null while the session clock is paused. Paused time
+    // is never drawing time: a break between poses, a backgrounded app and an explicit pause all
+    // stop this clock (see Pause).
+    TimeSpan? _currentImageRunningSince;
 
     // pool     : image URIs/document IDs to draw from (FD-001 output).
     // config   : validated seconds-per-image + total image count (FD-002 output).
@@ -68,6 +83,10 @@ public sealed class DrawingSession
     // Images completed (counted toward the total). Skips do not increment this.
     public int CompletedCount { get; private set; }
 
+    // Images left without counting: an explicit Skip, or one the player found unreadable. Reported
+    // on the summary screen; never affects CompletedCount or drawing time.
+    public int SkippedCount { get; private set; }
+
     // Images still to complete before the session ends. Never negative.
     public int Remaining => Math.Max(0, _targetCount - CompletedCount);
 
@@ -101,6 +120,7 @@ public sealed class DrawingSession
         if (IsComplete || CurrentImage is null)
             return;
 
+        SkippedCount++;
         Advance();
     }
 
@@ -117,12 +137,38 @@ public sealed class DrawingSession
         Finish();
     }
 
-    // Snapshot for the summary screen. TotalDrawingTime reflects completed (and, after End(), the
-    // final partial) images only — never skipped time.
-    public SessionSummary Summary => new(CompletedCount, _accumulatedDrawingTime);
+    // Stop banking drawing time without leaving the current image. Called for a break between
+    // poses, a backgrounded app, and an explicit pause — none of them is time spent drawing.
+    // Idempotent, and a no-op once complete.
+    public void Pause()
+    {
+        if (IsComplete || _currentImageRunningSince is not { } since)
+            return;
 
-    // Time spent on the image currently displayed, from the monotonic clock.
-    TimeSpan CurrentElapsed() => _now() - _currentImageStart;
+        _currentImageBanked += _now() - since;
+        _currentImageRunningSince = null;
+    }
+
+    // Start banking again on the same image. Idempotent, and a no-op once complete.
+    public void Resume()
+    {
+        if (IsComplete || _currentImageRunningSince is not null)
+            return;
+
+        _currentImageRunningSince = _now();
+    }
+
+    // True while the session clock is banking time against the current image.
+    public bool IsRunning => !IsComplete && _currentImageRunningSince is not null;
+
+    // Snapshot for the summary screen. TotalDrawingTime reflects completed (and, after End(), the
+    // final partial) images only — never skipped time, and never paused or break time.
+    public SessionSummary Summary => new(CompletedCount, _accumulatedDrawingTime, SkippedCount);
+
+    // Time spent drawing the image currently displayed: banked segments plus the one still running.
+    TimeSpan CurrentElapsed() =>
+        _currentImageBanked +
+        (_currentImageRunningSince is { } since ? _now() - since : TimeSpan.Zero);
 
     // Move to the next image and (re)start its timer, or finish if the pool is empty.
     void Advance()
@@ -137,7 +183,8 @@ public sealed class DrawingSession
             Refill();
 
         CurrentImage = _upcoming.Dequeue();
-        _currentImageStart = _now();
+        _currentImageBanked = TimeSpan.Zero;
+        _currentImageRunningSince = _now();
     }
 
     // Rebuild the upcoming queue for a fresh pass through the pool, shuffled when configured.
@@ -163,5 +210,6 @@ public sealed class DrawingSession
     {
         IsComplete = true;
         CurrentImage = null;
+        _currentImageRunningSince = null;
     }
 }

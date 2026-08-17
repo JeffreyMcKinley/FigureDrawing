@@ -1,70 +1,454 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The three tabbed screens of the Claude Design mock - Session (setup), Images (reference library)
+  and Settings - as one Activity with three panes and a bottom tab bar. Only one pane is visible at
+  a time; MainActivity swaps them.
+
+  Panes are siblings rather than separate Activities because they share one settings document and
+  one loaded pool: switching to Images to pick a folder and back to Session must not rebuild either.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:fitsSystemWindows="true"
-    android:padding="16dp">
+    android:background="@color/bg">
 
-    <Button
-        android:id="@+id/pick_button"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/pick_button_text" />
-
-    <!-- FD-002 session setup: seconds-per-image and image-count inputs + Start. -->
-    <TextView
-        android:id="@+id/seconds_label"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/seconds_label_text" />
-
-    <EditText
-        android:id="@+id/seconds_input"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:inputType="number" />
-
-    <TextView
-        android:id="@+id/count_label"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="@string/count_label_text" />
-
-    <EditText
-        android:id="@+id/count_input"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:inputType="number" />
-
-    <Button
-        android:id="@+id/start_button"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:enabled="false"
-        android:text="@string/start_button_text" />
-
-    <TextView
-        android:id="@+id/empty_label"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:gravity="center"
-        android:text="@string/empty_label_text" />
-
-    <ScrollView
+    <FrameLayout
+        android:id="@+id/main_content"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="16dp">
+        android:layout_weight="1">
 
-        <LinearLayout
-            android:id="@+id/image_container"
+        <!-- ============================ Session (setup) ============================ -->
+        <ScrollView
+            android:id="@+id/pane_setup"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </ScrollView>
+            android:layout_height="match_parent"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingLeft="@dimen/space_6"
+                android:paddingRight="@dimen/space_6"
+                android:paddingTop="@dimen/space_4"
+                android:paddingBottom="@dimen/space_8">
+
+                <TextView
+                    android:id="@+id/setup_kicker"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="11sp"
+                    android:textAllCaps="true"
+                    android:letterSpacing="0.14"
+                    android:textColor="@color/neutral_500"
+                    android:text="@string/setup_kicker_text" />
+
+                <TextView
+                    android:id="@+id/setup_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textSize="26sp"
+                    android:fontFamily="@font/inter_medium"
+                    android:textColor="@color/text"
+                    android:text="@string/setup_title_text" />
+
+                <!-- Seconds per image: quick-pick chips over the exact input. -->
+                <TextView
+                    android:id="@+id/seconds_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_400"
+                    android:text="@string/seconds_label_text" />
+
+                <LinearLayout
+                    android:id="@+id/seconds_presets"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/chip_sec_30"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:text="@string/preset_30s_text" />
+
+                    <Button
+                        android:id="@+id/chip_sec_60"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/preset_1m_text" />
+
+                    <Button
+                        android:id="@+id/chip_sec_120"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/preset_2m_text" />
+
+                    <Button
+                        android:id="@+id/chip_sec_300"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/preset_5m_text" />
+                </LinearLayout>
+
+                <EditText
+                    android:id="@+id/seconds_input"
+                    style="@style/Input"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:inputType="number"
+                    android:hint="@string/seconds_label_text" />
+
+                <!-- Number of images -->
+                <TextView
+                    android:id="@+id/count_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_6"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_400"
+                    android:text="@string/count_label_text" />
+
+                <EditText
+                    android:id="@+id/count_input"
+                    style="@style/Input"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:inputType="number"
+                    android:hint="@string/count_label_text" />
+
+                <!-- Break between poses -->
+                <TextView
+                    android:id="@+id/break_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_6"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_400"
+                    android:text="@string/break_label_text" />
+
+                <LinearLayout
+                    android:id="@+id/break_presets"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/chip_break_0"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:text="@string/break_none_text" />
+
+                    <Button
+                        android:id="@+id/chip_break_5"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/break_5s_text" />
+
+                    <Button
+                        android:id="@+id/chip_break_15"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/break_15s_text" />
+
+                    <Button
+                        android:id="@+id/chip_break_60"
+                        style="@style/Chip"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="@dimen/space_3"
+                        android:text="@string/break_1m_text" />
+                </LinearLayout>
+
+                <!-- Which pool the session will draw from, with a shortcut to change it. -->
+                <LinearLayout
+                    android:id="@+id/pool_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bg_card"
+                    android:padding="@dimen/space_4">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/pool_label"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="14sp"
+                            android:textColor="@color/text"
+                            android:text="@string/pool_empty_text" />
+
+                        <TextView
+                            android:id="@+id/pool_help"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="12sp"
+                            android:textColor="@color/neutral_500"
+                            android:text="@string/pool_help_text" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/change_button"
+                        style="@style/GhostButton"
+                        android:text="@string/change_button_text" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/start_button"
+                    style="@style/PrimaryButton"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:minHeight="48dp"
+                    android:textSize="15sp"
+                    android:enabled="false"
+                    android:text="@string/start_button_text" />
+
+                <TextView
+                    android:id="@+id/estimate_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:gravity="center_horizontal"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_500" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- ============================ Images (library) ============================ -->
+        <LinearLayout
+            android:id="@+id/pane_library"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:paddingLeft="@dimen/space_6"
+            android:paddingRight="@dimen/space_6"
+            android:paddingTop="@dimen/space_4"
+            android:paddingBottom="@dimen/space_4">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="bottom">
+
+                <TextView
+                    android:id="@+id/library_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="22sp"
+                    android:fontFamily="@font/inter_medium"
+                    android:textColor="@color/text"
+                    android:text="@string/library_title_text" />
+
+                <TextView
+                    android:id="@+id/library_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_500"
+                    android:text="@string/pool_empty_text" />
+            </LinearLayout>
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="@dimen/space_4"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <GridLayout
+                        android:id="@+id/image_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:columnCount="2"
+                        android:useDefaultMargins="false" />
+
+                    <TextView
+                        android:id="@+id/empty_label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_8"
+                        android:gravity="center"
+                        android:lineSpacingMultiplier="1.4"
+                        android:textSize="13sp"
+                        android:textColor="@color/neutral_500"
+                        android:text="@string/empty_label_text" />
+
+                    <TextView
+                        android:id="@+id/library_more"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_3"
+                        android:gravity="center"
+                        android:textSize="12sp"
+                        android:textColor="@color/neutral_500"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </ScrollView>
+
+            <Button
+                android:id="@+id/pick_button"
+                style="@style/PrimaryButton"
+                android:layout_marginTop="@dimen/space_4"
+                android:minHeight="46dp"
+                android:text="@string/pick_button_text" />
+
+            <TextView
+                android:id="@+id/library_help"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_3"
+                android:lineSpacingMultiplier="1.4"
+                android:textSize="12sp"
+                android:textColor="@color/neutral_500"
+                android:text="@string/library_help_text" />
+        </LinearLayout>
+
+        <!-- ============================ Settings ============================ -->
+        <ScrollView
+            android:id="@+id/pane_settings"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingLeft="@dimen/space_6"
+                android:paddingRight="@dimen/space_6"
+                android:paddingTop="@dimen/space_4"
+                android:paddingBottom="@dimen/space_8">
+
+                <TextView
+                    android:id="@+id/settings_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="22sp"
+                    android:fontFamily="@font/inter_medium"
+                    android:textColor="@color/text"
+                    android:text="@string/settings_title_text" />
+
+                <LinearLayout
+                    style="@style/SettingRow"
+                    android:layout_marginTop="@dimen/space_4">
+
+                    <LinearLayout style="@style/SettingRowText">
+                        <TextView style="@style/SettingLabel" android:text="@string/setting_shuffle_label" />
+                        <TextView style="@style/SettingHelp" android:text="@string/setting_shuffle_help" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/setting_shuffle"
+                        style="@style/Chip" />
+                </LinearLayout>
+
+                <LinearLayout
+                    style="@style/SettingRow"
+                    android:layout_marginTop="@dimen/space_3">
+
+                    <LinearLayout style="@style/SettingRowText">
+                        <TextView style="@style/SettingLabel" android:text="@string/setting_awake_label" />
+                        <TextView style="@style/SettingHelp" android:text="@string/setting_awake_help" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/setting_awake"
+                        style="@style/Chip" />
+                </LinearLayout>
+
+                <LinearLayout
+                    style="@style/SettingRow"
+                    android:layout_marginTop="@dimen/space_3">
+
+                    <LinearLayout style="@style/SettingRowText">
+                        <TextView style="@style/SettingLabel" android:text="@string/setting_chime_label" />
+                        <TextView style="@style/SettingHelp" android:text="@string/setting_chime_help" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/setting_chime"
+                        style="@style/Chip" />
+                </LinearLayout>
+
+                <LinearLayout
+                    style="@style/SettingRow"
+                    android:layout_marginTop="@dimen/space_3">
+
+                    <LinearLayout style="@style/SettingRowText">
+                        <TextView style="@style/SettingLabel" android:text="@string/setting_grayscale_label" />
+                        <TextView style="@style/SettingHelp" android:text="@string/setting_grayscale_help" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/setting_grayscale"
+                        style="@style/Chip" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/settings_privacy"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_6"
+                    android:lineSpacingMultiplier="1.4"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_500"
+                    android:text="@string/settings_privacy_text" />
+            </LinearLayout>
+        </ScrollView>
+    </FrameLayout>
+
+    <!-- ============================ Bottom tabs ============================ -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/neutral_800" />
+
+    <LinearLayout
+        android:id="@+id/tab_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/surface">
+
+        <LinearLayout android:id="@+id/tab_session" style="@style/Tab">
+            <View style="@style/TabIndicator" />
+            <TextView style="@style/TabLabel" android:text="@string/tab_session_text" />
+        </LinearLayout>
+
+        <LinearLayout android:id="@+id/tab_images" style="@style/Tab">
+            <View style="@style/TabIndicator" />
+            <TextView style="@style/TabLabel" android:text="@string/tab_images_text" />
+        </LinearLayout>
+
+        <LinearLayout android:id="@+id/tab_settings" style="@style/Tab">
+            <View style="@style/TabIndicator" />
+            <TextView style="@style/TabLabel" android:text="@string/tab_settings_text" />
+        </LinearLayout>
+    </LinearLayout>
 </LinearLayout>

@@ -89,25 +89,111 @@ public class SessionScreenContractTests
     public void Strings_DeclaresSessionStrings(string name) =>
         Assert.Contains(name, StringResourceNames());
 
-    // FD-005: the countdown must not be hidden behind the pose image, and must not start life
-    // invisible — it is the one control the drawer looks at all session long.
+    // FD-005: the countdown must not start life invisible — it is the one control the drawer looks
+    // at all session long. Since the Claude Design import it sits in the rail beside the pose rather
+    // than overlaying it, so what has to hold is that the rail is painted, not that it is on top.
     [Fact]
-    public void SessionTimer_OverlaysTheImage_AndIsVisibleByDefault()
+    public void SessionTimer_IsVisibleByDefault()
     {
-        var doc = XDocument.Load(TestPaths.Path("Resources", "layout", "activity_session.xml"));
-        var root = doc.Root!;
-        var children = root.Elements().ToList();
+        var timer = Element("session_timer");
 
-        var imageIndex = children.FindIndex(e => e.Attribute(Android + "id")?.Value == "@+id/session_image");
-        var timerIndex = children.FindIndex(e => e.Attribute(Android + "id")?.Value == "@+id/session_timer");
-
-        Assert.True(imageIndex >= 0 && timerIndex > imageIndex,
-            "session_timer must be declared after session_image so it draws on top of the pose.");
-
-        var timer = children[timerIndex];
         Assert.NotEqual("gone", timer.Attribute(Android + "visibility")?.Value);
         Assert.NotEqual("invisible", timer.Attribute(Android + "visibility")?.Value);
+        Assert.Equal("session_rail", AncestorIds(timer).First(id => id is not null));
     }
+
+    // The three things that cover the pose (the rule-of-thirds grid, the between-poses break and the
+    // pause sheet) must be declared after the image inside the stage, or they would be painted
+    // underneath it and never seen.
+    [Theory]
+    [InlineData("session_grid")]
+    [InlineData("session_break_overlay")]
+    [InlineData("session_pause_overlay")]
+    public void StageOverlays_AreDeclaredAfterTheImage(string id)
+    {
+        var stage = Element("session_stage").Elements().ToList();
+
+        var imageIndex = stage.FindIndex(e => LocalId(e) == "session_image");
+        var overlayIndex = stage.FindIndex(e => LocalId(e) == id);
+
+        Assert.True(imageIndex >= 0, "session_image must be a direct child of session_stage.");
+        Assert.True(overlayIndex > imageIndex,
+            $"{id} must be declared after session_image so it draws on top of the pose.");
+    }
+
+    // Every overlay starts hidden: the pose is what the screen opens on.
+    [Theory]
+    [InlineData("session_grid")]
+    [InlineData("session_break_overlay")]
+    [InlineData("session_pause_overlay")]
+    [InlineData("session_summary")]
+    [InlineData("session_status")]
+    public void OverlaysAndSummary_StartHidden(string id) =>
+        Assert.Equal("gone", Element(id).Attribute(Android + "visibility")?.Value);
+
+    // The imported player: the rail's readouts and controls, the break/pause overlays' own clocks,
+    // the viewing-tool chips, and the summary's four stats.
+    [Theory]
+    [InlineData("session_body")]
+    [InlineData("session_stage")]
+    [InlineData("session_rail")]
+    [InlineData("session_ring")]
+    [InlineData("session_progress")]
+    [InlineData("session_pause")]
+    [InlineData("session_skip")]
+    [InlineData("session_next")]
+    [InlineData("session_end")]
+    [InlineData("session_progress_group")]
+    [InlineData("session_pips")]
+    [InlineData("session_stats")]
+    [InlineData("break_timer")]
+    [InlineData("paused_timer")]
+    [InlineData("paused_stats")]
+    [InlineData("paused_resume")]
+    [InlineData("paused_skip")]
+    [InlineData("paused_end")]
+    [InlineData("chip_grayscale")]
+    [InlineData("chip_flip")]
+    [InlineData("chip_grid")]
+    [InlineData("chip_blur")]
+    [InlineData("chip_zoom_in")]
+    [InlineData("chip_zoom_out")]
+    [InlineData("summary_images")]
+    [InlineData("summary_time")]
+    [InlineData("summary_average")]
+    [InlineData("summary_skipped")]
+    [InlineData("summary_again")]
+    [InlineData("summary_settings")]
+    public void ActivitySession_DeclaresTheImportedPlayerViews(string id) =>
+        Assert.Contains(id, LayoutIds("activity_session"));
+
+    [Theory]
+    [InlineData("session_progress_format")]
+    [InlineData("session_stats_format")]
+    [InlineData("session_ring_desc")]
+    [InlineData("break_kicker_text")]
+    [InlineData("break_help_text")]
+    [InlineData("paused_kicker_text")]
+    [InlineData("paused_stats_format")]
+    [InlineData("tool_grayscale_text")]
+    [InlineData("tool_flip_text")]
+    [InlineData("tool_grid_text")]
+    [InlineData("tool_blur_text")]
+    [InlineData("summary_kicker_text")]
+    [InlineData("summary_again_text")]
+    [InlineData("summary_settings_text")]
+    public void Strings_DeclaresTheImportedPlayerStrings(string name) =>
+        Assert.Contains(name, StringResourceNames());
+
+    static XElement Element(string id) =>
+        XDocument.Load(TestPaths.Path("Resources", "layout", "activity_session.xml"))
+            .Descendants().First(e => LocalId(e) == id);
+
+    static string? LocalId(XElement element) =>
+        element.Attribute(Android + "id")?.Value?.Replace("@+id/", "").Replace("@id/", "");
+
+    static IEnumerable<string?> AncestorIds(XElement element) =>
+        element.Ancestors().Select(LocalId);
 
     // FD-005 regression: the timer overlays the very top of the pose, so an opaque ActionBar (the
     // default theme's title bar) would draw straight over it and hide it. The session screen is a
@@ -134,18 +220,28 @@ public class SessionScreenContractTests
         Assert.Equal("true", root.Attribute(Android + "fitsSystemWindows")?.Value);
     }
 
-    // The screen must drive the countdown from the Core PoseCountdown and reset it per pose, and it
-    // must pause/resume with the lifecycle (FD-005 acceptance). Source-level guard: these are
-    // Android-only code paths the unit tests can't execute.
+    // The screen must drive the session from the Core aggregate and pause/resume it with the
+    // lifecycle (FD-005 acceptance). Source-level guard: these are Android-only code paths the unit
+    // tests can't execute.
+    [Theory]
+    [InlineData("new PoseSession<")]
+    [InlineData("session.Tick()")]
+    [InlineData("session.Pause()")]
+    [InlineData("session.Resume()")]
+    [InlineData("protected override void OnPause()")]
+    [InlineData("protected override void OnResume()")]
+    public void SessionActivity_WiresTheSessionToTheLifecycle(string snippet) =>
+        Assert.Contains(snippet, SessionActivitySource);
+
+    // "Restart the pose clock whenever the image changes" is a domain rule, and it used to be
+    // written here as `player.Next(); countdown.Restart();` (docs/ARCHITECTURE.md §17/§20.2). It now
+    // lives in PoseSession, where it is unit-tested. A countdown driven from the screen again would
+    // be that rule leaking back out of Core.
     [Theory]
     [InlineData("new PoseCountdown(")]
     [InlineData("countdown.Restart()")]
-    [InlineData("countdown.Pause()")]
-    [InlineData("countdown.Resume()")]
-    [InlineData("protected override void OnPause()")]
-    [InlineData("protected override void OnResume()")]
-    public void SessionActivity_WiresTheCountdownToTheLifecycle(string snippet) =>
-        Assert.Contains(snippet, SessionActivitySource);
+    public void SessionActivity_DoesNotDriveTheCountdownItself(string snippet) =>
+        Assert.DoesNotContain(snippet, SessionActivitySource);
 
     // The fitCenter scale type is what keeps the image filling the screen WITHOUT distortion
     // (FD-004 acceptance). Guard it against an accidental edit to a stretching scale type.

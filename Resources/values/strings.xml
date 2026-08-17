@@ -1,14 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every user-facing string in the app (docs/ARCHITECTURE.md §10: no literals in an Activity).
+  Grouped by the screen it belongs to; the wording follows the Claude Design source.
+-->
 <resources>
     <string name="app_name">FigureDrawing</string>
+
+    <!-- Bottom tabs -->
+    <string name="tab_session_text">Session</string>
+    <string name="tab_images_text">Images</string>
+    <string name="tab_settings_text">Settings</string>
+
+    <!-- Session setup -->
+    <string name="setup_kicker_text">New session</string>
+    <string name="setup_title_text">Set the pace</string>
+    <string name="seconds_label_text">Seconds per image</string>
+    <string name="count_label_text">Number of images</string>
+    <string name="break_label_text">Break between poses</string>
+    <string name="preset_30s_text">30s</string>
+    <string name="preset_1m_text">1m</string>
+    <string name="preset_2m_text">2m</string>
+    <string name="preset_5m_text">5m</string>
+    <string name="break_none_text">None</string>
+    <string name="break_5s_text">5s</string>
+    <string name="break_15s_text">15s</string>
+    <string name="break_1m_text">1m</string>
+    <string name="pool_ready_format">{0} images ready</string>
+    <string name="pool_empty_text">No images yet</string>
+    <string name="pool_help_text">Your reference folder</string>
+    <string name="change_button_text">Change</string>
+    <string name="start_button_text">Start session</string>
+    <string name="estimate_format">About {0} including breaks</string>
+
+    <!-- Reference library -->
+    <string name="library_title_text">Images</string>
+    <string name="library_help_text">Pick a folder of reference images. The choice is remembered between sessions, and nothing leaves the device.</string>
+    <string name="library_more_format">+{0} more not shown</string>
     <string name="pick_button_text">Pick folder</string>
     <string name="empty_label_text">No folder selected yet. Tap \"Pick folder\" to choose a folder of reference images.</string>
     <string name="empty_folder_text">No images found in that folder. Pick a folder that contains image files.</string>
     <string name="folder_error_text">Couldn\'t open that folder. Try picking it again.</string>
-    <string name="seconds_label_text">Seconds per image</string>
-    <string name="count_label_text">Number of images</string>
-    <string name="start_button_text">Start session</string>
+    <string name="thumbnail_desc">Reference image</string>
+
+    <!-- Settings -->
+    <string name="settings_title_text">Settings</string>
+    <string name="setting_shuffle_label">Shuffle images</string>
+    <string name="setting_shuffle_help">Random order, every image once per pass</string>
+    <string name="setting_awake_label">Keep screen awake</string>
+    <string name="setting_awake_help">Prevents sleep during a session</string>
+    <string name="setting_chime_label">Chime on change</string>
+    <string name="setting_chime_help">Short tone when the pose changes</string>
+    <string name="setting_grayscale_label">Start in grayscale</string>
+    <string name="setting_grayscale_help">Useful for value studies</string>
+    <string name="toggle_on_text">On</string>
+    <string name="toggle_off_text">Off</string>
+    <string name="settings_privacy_text">Reference images stay on the device. Nothing is uploaded.</string>
+
+    <!-- Player screen -->
     <string name="session_image_desc">Current reference image</string>
     <string name="session_timer_desc">Time remaining for this pose</string>
     <string name="session_timer_placeholder">0:00</string>
+    <string name="session_ring_desc">Progress through this pose</string>
+    <string name="session_progress_format">Image {0} of {1}</string>
+    <string name="session_stats_format">{0} drawn · {1} skipped</string>
+    <string name="session_progress_heading">Session progress</string>
     <string name="session_error_text">Couldn\'t display these images. Go back and pick another folder.</string>
+
+    <string name="tool_grayscale_text">Grayscale</string>
+    <string name="tool_flip_text">Flip</string>
+    <string name="tool_grid_text">Grid</string>
+    <string name="tool_blur_text">Blur</string>
+    <string name="tool_zoom_in_text">+</string>
+    <string name="tool_zoom_out_text">−</string>
+
+    <string name="session_pause_text">Pause</string>
+    <string name="session_resume_text">Resume</string>
+    <string name="session_skip_text">Skip</string>
+    <string name="session_next_text">Next</string>
+    <string name="session_end_text">End</string>
+    <string name="session_skip_image_text">Skip this image</string>
+    <string name="session_end_session_text">End session</string>
+
+    <string name="break_kicker_text">Break</string>
+    <string name="break_help_text">Next pose coming up</string>
+    <string name="paused_kicker_text">Paused</string>
+    <string name="paused_stats_format">{0} · {1} drawn</string>
+
+    <!-- Summary -->
+    <string name="summary_kicker_text">Session complete</string>
+    <string name="summary_title_text">Good session</string>
+    <string name="summary_images_label">Images drawn</string>
+    <string name="summary_time_label">Time drawing</string>
+    <string name="summary_average_label">Average pose</string>
+    <string name="summary_skipped_label">Skipped</string>
+    <string name="summary_again_text">Run it again</string>
+    <string name="summary_settings_text">Change settings</string>
 </resources>

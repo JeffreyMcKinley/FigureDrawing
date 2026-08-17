@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Reference-grid columns on the Images screen. The design shows two columns on a folded phone and
+  four with the fold open; values-sw600dp supplies the wide variant.
+-->
+<resources>
+    <integer name="library_columns">2</integer>
+</resources>

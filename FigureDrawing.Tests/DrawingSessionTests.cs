@@ -231,6 +231,164 @@ public class DrawingSessionTests
         Assert.Null(s.CurrentImage);
     }
 
+    // --- Pausing the session clock -------------------------------------------
+
+    // Drawing time is time spent drawing. A break between poses, a backgrounded app and an explicit
+    // pause all stop the clock; none of them may end up in the total.
+    [Fact]
+    public void PausedTime_IsNotBankedAsDrawingTime()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 2, clock: clock);
+
+        clock.Advance(10);
+        s.Pause();
+        clock.Advance(600);        // ten minutes away from the easel
+        s.Resume();
+        clock.Advance(20);
+        s.Next();
+
+        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
+    }
+
+    [Fact]
+    public void PauseAndResume_AreIdempotent()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 2, clock: clock);
+
+        clock.Advance(5);
+        s.Pause();
+        s.Pause();                 // second pause must not re-bank the same segment
+        clock.Advance(100);
+        s.Resume();
+        s.Resume();                // second resume must not restart the segment
+        clock.Advance(5);
+        s.Next();
+
+        Assert.Equal(TimeSpan.FromSeconds(10), s.Summary.TotalDrawingTime);
+    }
+
+    [Fact]
+    public void EndingWhilePaused_BanksOnlyTheTimeActuallyDrawn()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 3, clock: clock);
+
+        clock.Advance(12);
+        s.Pause();
+        clock.Advance(300);
+        s.End();
+
+        Assert.Equal(TimeSpan.FromSeconds(12), s.Summary.TotalDrawingTime);
+    }
+
+    // A fresh image always starts a fresh, running clock — a pause never carries across an advance.
+    [Fact]
+    public void AdvancingWhilePaused_StartsTheNextImageRunning()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 3, clock: clock);
+
+        clock.Advance(10);
+        s.Pause();
+        s.Next();                  // banks 10s, moves to the next image
+        Assert.True(s.IsRunning);
+
+        clock.Advance(20);
+        s.Next();
+
+        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
+    }
+
+    [Fact]
+    public void PauseAndResume_AreNoOpsOnceComplete()
+    {
+        var s = Make(count: 1);
+
+        s.Next();
+        Assert.True(s.IsComplete);
+        Assert.False(s.IsRunning);
+
+        s.Resume();
+        Assert.False(s.IsRunning);
+    }
+
+    // --- Skipped count / summary projection ----------------------------------
+
+    [Fact]
+    public void SkippedCount_StartsAtZero_AndOnlySkipRaisesIt()
+    {
+        var s = Make(count: 4);
+        Assert.Equal(0, s.SkippedCount);
+
+        s.Next();
+        Assert.Equal(0, s.SkippedCount);
+
+        s.Skip();
+        s.Skip();
+        Assert.Equal(2, s.SkippedCount);
+        Assert.Equal(1, s.CompletedCount);
+    }
+
+    [Fact]
+    public void Summary_ReportsSkips_AlongsideCompletions()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 3, clock: clock);
+
+        clock.Advance(10);
+        s.Next();                  // completed, 10s banked
+        clock.Advance(5);
+        s.Skip();                  // not counted, 5s discarded
+        clock.Advance(20);
+        s.Next();                  // completed, 20s banked
+
+        var summary = s.Summary;
+        Assert.Equal(2, summary.ImagesDisplayed);
+        Assert.Equal(1, summary.SkippedCount);
+        Assert.Equal(TimeSpan.FromSeconds(30), summary.TotalDrawingTime);
+    }
+
+    [Fact]
+    public void Summary_AveragePoseTime_IsOverCompletedPosesOnly()
+    {
+        var clock = new FakeClock();
+        var s = Make(count: 3, clock: clock);
+
+        clock.Advance(10);
+        s.Next();
+        clock.Advance(60);
+        s.Skip();                  // a long look at an image that never counted
+        clock.Advance(30);
+        s.Next();
+
+        // 40s over two completed poses — the skipped minute is not in the average.
+        Assert.Equal(TimeSpan.FromSeconds(20), s.Summary.AveragePoseTime);
+    }
+
+    [Fact]
+    public void Summary_AveragePoseTime_IsZeroWhenNothingCompleted()
+    {
+        var s = Make(count: 3);
+
+        s.Skip();
+        s.End();
+
+        Assert.Equal(TimeSpan.Zero, s.Summary.AveragePoseTime);
+    }
+
+    [Fact]
+    public void SkipsAfterCompletion_DoNotRaiseTheSkippedCount()
+    {
+        var s = Make(count: 1);
+
+        s.Next();                  // session complete
+        s.Skip();
+
+        Assert.Equal(0, s.SkippedCount);
+    }
+
     // Runs the session to completion via Next(), collecting each displayed image.
     static List<string> Drain(DrawingSession s)
     {

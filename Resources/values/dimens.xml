@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nocturne's radius and spacing scale, plus the sizes the player rail is built on. -->
+<resources>
+    <dimen name="radius_md">8dp</dimen>
+    <dimen name="radius_lg">14dp</dimen>
+
+    <dimen name="space_2">6dp</dimen>
+    <dimen name="space_3">8dp</dimen>
+    <dimen name="space_4">12dp</dimen>
+    <dimen name="space_6">16dp</dimen>
+    <dimen name="space_8">22dp</dimen>
+
+    <!-- Every tappable chip/tab clears the 36dp / 48dp touch minimums. -->
+    <dimen name="chip_min_height">36dp</dimen>
+    <dimen name="tab_min_height">52dp</dimen>
+
+    <dimen name="ring_size">46dp</dimen>
+    <!-- The player rail when it sits beside the pose on a wide screen (fold open). -->
+    <dimen name="rail_width">288dp</dimen>
+    <dimen name="pip_size">10dp</dimen>
+    <dimen name="pip_gap">3dp</dimen>
+
+    <!-- Reference-grid cell height. Shorter with the fold open, where there are four columns. -->
+    <dimen name="thumb_height">168dp</dimen>
+</resources>

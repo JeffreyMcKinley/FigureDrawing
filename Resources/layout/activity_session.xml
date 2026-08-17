@@ -1,50 +1,389 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FD-004 session player screen. One reference image at a time, filling the available space without
-  distortion (fitCenter keeps aspect ratio), on a black background so it reads like a lightbox. The
-  status text overlays the center only when an image can't be shown.
+  The player screen from the Claude Design mock: the pose on a lightbox stage, and a rail carrying
+  the countdown ring, the viewing tools, and the pose controls. The rail sits under the stage on a
+  phone and beside it when the screen is wide enough (fold open) - SessionActivity flips the
+  orientation at runtime rather than duplicating this file into layout-w600dp.
+
+  Three things overlay the stage: the rule-of-thirds grid, the between-poses break, and the pause
+  sheet. The summary is a sibling of the whole player, shown once the session ends.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/session_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fitsSystemWindows="true"
-    android:background="@android:color/black">
+    android:background="@color/bg">
 
-    <ImageView
-        android:id="@+id/session_image"
+    <LinearLayout
+        android:id="@+id/session_body"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="fitCenter"
-        android:contentDescription="@string/session_image_desc" />
+        android:orientation="vertical">
 
-    <!--
-      FD-005 countdown. Overlays the top of the image (the pose fills the whole screen) so it is
-      always visible without stealing space from the drawing reference. Large and monospaced-ish so
-      it reads at arm's length from an easel.
-    -->
-    <TextView
-        android:id="@+id/session_timer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
-        android:padding="12dp"
-        android:textSize="32sp"
-        android:textStyle="bold"
-        android:shadowColor="@android:color/black"
-        android:shadowRadius="6"
-        android:textColor="@android:color/white"
-        android:contentDescription="@string/session_timer_desc"
-        android:text="@string/session_timer_placeholder" />
+        <!-- ============================ Stage ============================ -->
+        <FrameLayout
+            android:id="@+id/session_stage"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="@color/stage">
 
+            <!--
+              fitCenter is what keeps the reference undistorted; zoom is applied as a scale on top
+              of it, so the image is never stretched to fill.
+            -->
+            <ImageView
+                android:id="@+id/session_image"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:contentDescription="@string/session_image_desc" />
+
+            <!-- Rule-of-thirds guides: two vertical and two horizontal hairlines over the pose. -->
+            <FrameLayout
+                android:id="@+id/session_grid"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal">
+
+                    <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
+                    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@color/grid_line" />
+                    <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
+                    <View android:layout_width="1dp" android:layout_height="match_parent" android:background="@color/grid_line" />
+                    <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical">
+
+                    <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/grid_line" />
+                    <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/grid_line" />
+                    <View android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Between poses: the next image is already loaded underneath this. -->
+            <LinearLayout
+                android:id="@+id/session_break_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@color/overlay_break"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Kicker"
+                    android:textColor="@color/accent_400"
+                    android:text="@string/break_kicker_text" />
+
+                <TextView
+                    android:id="@+id/break_timer"
+                    style="@style/Clock"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:textSize="44sp"
+                    android:text="@string/session_timer_placeholder" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:textSize="13sp"
+                    android:textColor="@color/neutral_500"
+                    android:text="@string/break_help_text" />
+            </LinearLayout>
+
+            <!-- Paused: the clock is frozen and the three exits from a pose are spelled out. -->
+            <LinearLayout
+                android:id="@+id/session_pause_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:padding="@dimen/space_8"
+                android:background="@color/overlay_pause"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Kicker"
+                    android:text="@string/paused_kicker_text" />
+
+                <TextView
+                    android:id="@+id/paused_timer"
+                    style="@style/Clock"
+                    android:layout_marginTop="@dimen/space_2"
+                    android:textSize="44sp"
+                    android:text="@string/session_timer_placeholder" />
+
+                <TextView
+                    android:id="@+id/paused_stats"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_2"
+                    android:textSize="13sp"
+                    android:textColor="@color/neutral_500" />
+
+                <Button
+                    android:id="@+id/paused_resume"
+                    style="@style/PrimaryButton"
+                    android:layout_width="260dp"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:minHeight="46dp"
+                    android:text="@string/session_resume_text" />
+
+                <Button
+                    android:id="@+id/paused_skip"
+                    style="@style/SecondaryButton"
+                    android:layout_width="260dp"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:text="@string/session_skip_image_text" />
+
+                <Button
+                    android:id="@+id/paused_end"
+                    style="@style/GhostButton"
+                    android:layout_width="260dp"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:text="@string/session_end_session_text" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- ============================ Rail ============================ -->
+        <LinearLayout
+            android:id="@+id/session_rail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/surface"
+            android:paddingLeft="@dimen/space_6"
+            android:paddingRight="@dimen/space_6"
+            android:paddingTop="@dimen/space_6"
+            android:paddingBottom="@dimen/space_8">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ProgressBar
+                    android:id="@+id/session_ring"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="@dimen/ring_size"
+                    android:layout_height="@dimen/ring_size"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="100"
+                    android:progressDrawable="@drawable/progress_ring"
+                    android:contentDescription="@string/session_ring_desc" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginLeft="@dimen/space_4"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/session_timer"
+                        style="@style/Clock"
+                        android:contentDescription="@string/session_timer_desc"
+                        android:text="@string/session_timer_placeholder" />
+
+                    <TextView
+                        android:id="@+id/session_progress"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="12sp"
+                        android:textColor="@color/neutral_500" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/session_pause"
+                    style="@style/GhostButton"
+                    android:text="@string/session_pause_text" />
+            </LinearLayout>
+
+            <!-- Viewing aids. Two rows rather than one wrapping row so nothing falls off a phone. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_4"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/chip_grayscale" style="@style/Chip" android:layout_weight="1" android:text="@string/tool_grayscale_text" />
+                <Button android:id="@+id/chip_flip" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_flip_text" />
+                <Button android:id="@+id/chip_grid" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_grid_text" />
+                <Button android:id="@+id/chip_blur" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_blur_text" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_2"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/chip_zoom_out" style="@style/Chip" android:layout_weight="1" android:text="@string/tool_zoom_out_text" />
+                <Button android:id="@+id/chip_zoom_in" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_zoom_in_text" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_4"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/session_skip"
+                    style="@style/SecondaryButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="@string/session_skip_text" />
+
+                <Button
+                    android:id="@+id/session_next"
+                    style="@style/PrimaryButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_marginLeft="@dimen/space_2"
+                    android:text="@string/session_next_text" />
+
+                <Button
+                    android:id="@+id/session_end"
+                    style="@style/GhostButton"
+                    android:layout_marginLeft="@dimen/space_2"
+                    android:text="@string/session_end_text" />
+            </LinearLayout>
+
+            <!-- Only worth the vertical space when the rail is a tall column beside the pose. -->
+            <LinearLayout
+                android:id="@+id/session_progress_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_6"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    style="@style/Kicker"
+                    android:text="@string/session_progress_heading" />
+
+                <LinearLayout
+                    android:id="@+id/session_pips"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:orientation="horizontal" />
+
+                <TextView
+                    android:id="@+id/session_stats"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:textSize="12sp"
+                    android:textColor="@color/neutral_500" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Every reachable image failed to decode: an error, not a finished session. -->
     <TextView
         android:id="@+id/session_status"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:padding="24dp"
+        android:padding="@dimen/space_8"
         android:gravity="center"
-        android:textColor="@android:color/white"
+        android:lineSpacingMultiplier="1.4"
+        android:textColor="@color/neutral_300"
         android:visibility="gone"
         android:text="@string/session_error_text" />
+
+    <!-- ============================ Summary ============================ -->
+    <ScrollView
+        android:id="@+id/session_summary"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/space_8">
+
+            <TextView
+                style="@style/Kicker"
+                android:textColor="@color/accent_400"
+                android:text="@string/summary_kicker_text" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="26sp"
+                android:fontFamily="@font/inter_medium"
+                android:textColor="@color/text"
+                android:text="@string/summary_title_text" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_8"
+                android:orientation="horizontal">
+
+                <LinearLayout style="@style/StatCard">
+                    <TextView style="@style/StatKicker" android:text="@string/summary_images_label" />
+                    <TextView android:id="@+id/summary_images" style="@style/StatValue" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatCard" android:layout_marginLeft="@dimen/space_3">
+                    <TextView style="@style/StatKicker" android:text="@string/summary_time_label" />
+                    <TextView android:id="@+id/summary_time" style="@style/StatValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_3"
+                android:orientation="horizontal">
+
+                <LinearLayout style="@style/StatCard">
+                    <TextView style="@style/StatKicker" android:text="@string/summary_average_label" />
+                    <TextView android:id="@+id/summary_average" style="@style/StatValue" />
+                </LinearLayout>
+
+                <LinearLayout style="@style/StatCard" android:layout_marginLeft="@dimen/space_3">
+                    <TextView style="@style/StatKicker" android:text="@string/summary_skipped_label" />
+                    <TextView android:id="@+id/summary_skipped" style="@style/StatValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/summary_again"
+                style="@style/PrimaryButton"
+                android:layout_marginTop="@dimen/space_8"
+                android:minHeight="46dp"
+                android:text="@string/summary_again_text" />
+
+            <Button
+                android:id="@+id/summary_settings"
+                style="@style/GhostButton"
+                android:layout_width="match_parent"
+                android:layout_marginTop="@dimen/space_3"
+                android:text="@string/summary_settings_text" />
+        </LinearLayout>
+    </ScrollView>
 </FrameLayout>

@@ -60,6 +60,8 @@ project means adding a fourth exclude.
 | `DrawingSession` | The session: image sequence, shuffle, counts, skip semantics, elapsed-time accounting |
 | `SessionPlayer<TImage>` | Resolving the current image id to something displayable; skipping unreadable images |
 | `PoseCountdown` | Per-pose remaining time, pause/resume, display formatting |
+| `PoseSession<TImage>` | The player aggregate: pose/break/complete state machine over session + player + countdown |
+| `ViewerTools` | Grayscale/flip/grid/blur flags and the zoom range for the pose on screen |
 | `FolderImageEnumerator` / `IDocumentTree` / `DocumentEntry` | Recursive image discovery under a picked folder |
 | `BitmapMath` | Power-of-two sub-sample calculation |
 | `Data/AppSettings` / `Data/SettingsStore` | The persisted settings document and its LiteDB store |
@@ -72,9 +74,24 @@ commands as methods (`Next`, `Skip`, `End`, `Pause`, `Resume`, `Restart`).
 
 | Type | Owns |
 |---|---|
-| `MainActivity` | Folder picker (SAF), the preview list, setup inputs, launching a session |
-| `SessionActivity` | The player screen: one image, the countdown text, the repaint loop, lifecycle |
+| `MainActivity` | The three tabbed panes: setup inputs, the reference library + folder picker (SAF), settings |
+| `SessionActivity` | The player screen: pose, rail, break/pause overlays, summary, the repaint loop, lifecycle |
 | `ImageDecoding` | Two-pass `BitmapFactory` decode shared by both screens |
+
+The look is the **Nocturne** design system, imported from the Claude Design project *Figure Drawing
+Practice App*. Its tokens live in `Resources/values/colors.xml` + `dimens.xml`, and its component
+classes (`.tool-chip`, `.btn-*`, `.card`, `.input`, the tab bar) are the widget styles in
+`Resources/values/styles.xml`. Retune the system there rather than styling a control inline; a
+one-off `android:background` on a button is the same kind of violation as a rule in an Activity.
+
+**Typeface.** The system's font, Inter, is bundled at `Resources/font/` (weights 400/500/600, the
+same three the design system imports) under the SIL Open Font Licence — see
+`docs/third-party-licenses/`. It is what puts the app's minimum at **API 26**: framework font
+resources arrived in Oreo. It reaches views through the theme's `android:textAppearance` and
+`android:textAppearanceButton`, *not* through a bare `android:fontFamily` item on the theme —
+`TextView` never reads that off the theme, so setting it there looks right and does nothing.
+`EditText` is the one exception and names the family in the `Input` style, because the platform's
+`Widget.Material.EditText` pins its own text appearance. `TypefaceContractTests` guards all of it.
 
 An Activity is allowed to: find views, read intent extras, subscribe to view events, call Core,
 render Core's state, and manage its own lifecycle. It is not allowed to own a rule.
@@ -104,16 +121,18 @@ reproducible under test.
 
 ## 5. State and navigation
 
-- **Session state** lives in the `DrawingSession` / `SessionPlayer` / `PoseCountdown` instances
-  owned by `SessionActivity`, created in `OnCreate` from intent extras.
+- **Session state** lives in the single `PoseSession<Bitmap>` owned by `SessionActivity`, created in
+  `OnCreate` from intent extras (it composes `DrawingSession` / `SessionPlayer` / `PoseCountdown`).
 - **Screen-to-screen handoff** is intent extras only. `SessionActivity` declares its keys as public
-  constants (`ExtraPool`, `ExtraSeconds`, `ExtraCount`, `ExtraShuffle`, `ExtraGrayscale`);
-  `MainActivity.StartSession` fills them. Add a new input by adding a constant, not a string literal
+  constants (`ExtraPool`, `ExtraSeconds`, `ExtraCount`, `ExtraBreak`, `ExtraShuffle`,
+  `ExtraGrayscale`, `ExtraKeepAwake`, `ExtraChime`); `MainActivity.StartSession` fills them. Add a new input by adding a constant, not a string literal
   at the call site, and not a static or singleton.
 - **Persisted state** is the single `AppSettings` LiteDB document. It seeds the setup inputs on
   launch and records the last folder.
-- **(confirm)** Session state is *not* currently saved in `OnSaveInstanceState`, so a rotation or
-  process death restarts the pose. That is a known gap, not a pattern to copy.
+- **(confirm)** Session state is *not* currently saved in `OnSaveInstanceState`, so process death
+  restarts the pose. That is a known gap, not a pattern to copy. `SessionActivity` mitigates the
+  common case by declaring `ConfigurationChanges` for size/orientation and re-laying out in place,
+  so folding or unfolding mid-session keeps the pose.
 
 ## 6. Data access
 
@@ -188,7 +207,28 @@ a missing string, a build property regression. `TestPaths` locates the repo root
 without Android. They cover interaction between engine, player, and countdown.
 
 **UI tests** (`FigureDrawing.UITests`) — Appium against a real emulator. Slow and last resort; use
-only for behavior genuinely unreachable from Core.
+only for behavior genuinely unreachable from Core. Run them with `scripts/run-appium-tests.ps1`,
+which is the only supported entry point: it installs the toolchain, boots the emulator, builds and
+installs a self-contained APK, resets app + picker state, and manages the server.
+
+Three rules the harness depends on, each learned from a failure that looked like an app bug:
+
+- **One session per device.** The UiAutomator2 driver installs a single instrumentation on the
+  device and force-stops any running instance when a session starts, so two concurrent sessions kill
+  each other and every test fails with "The instrumentation process cannot be initialized". Every
+  UI-test class therefore carries `[Collection(AppiumCollection.Name)]` — one shared session, classes
+  run sequentially — with `DisableTestParallelization` as the backstop.
+- **Each test owns its starting state.** The suite shares one app install, so a test that picks a
+  folder leaves that choice persisted for every test after it. Anything asserting first-run
+  behaviour calls `UiTestEnvironment.ResetAppState()` itself rather than trusting run order.
+- **Navigate by Activity, not by package.** Setup/Images/Settings are panes of `MainActivity` while
+  the player is a separate Activity, so "press Back until the package is ours" is already satisfied
+  on the player screen and never reaches the tabs. `AppiumGuard.ReturnToMainScreen` keys off the
+  current *Activity* instead.
+- **The picker must be walked into a subfolder.** Android refuses to grant the root of shared
+  storage through `ACTION_OPEN_DOCUMENT_TREE` — it shows "Can't use this folder" and offers no
+  confirm button — and that root is exactly where DocumentsUI opens with no history.
+  `AppiumGuard.SelectDefaultFolder` taps the seeded folder by name before confirming.
 
 Rules:
 
@@ -266,6 +306,8 @@ strings use them consistently; a synonym in a new type name is a review comment.
 | **Config** | The validated `(SecondsPerImage, ImageCount)` pair handed to a session | "settings" (that's persistence) |
 | **Complete** | A pose that counted toward the target — timer expiry or a manual done-tap | "finished" (ambiguous with session end) |
 | **Skip** | Leaving a pose without counting it and without banking its time | "next" |
+| **Break** | The configured rest between two poses. Never before the first or after the last | "pause" (that's the drawer stopping the clock) |
+| **Viewing aid** | Grayscale, flip, grid, blur, zoom — how the pose is presented, never what it counts | "filter", "effect" |
 | **Drawing time** | Accumulated time over completed poses only; skipped time is never banked | "elapsed", "session length" |
 | **Unreadable** | An image id the loader could not decode; skipped and logged, never fatal | "corrupt", "missing" |
 | **Settings** | The persisted user preferences document that *seeds* setup across launches | "config" |
@@ -287,7 +329,7 @@ Four contexts, each a cohesive vocabulary with its own rules. All four live in
 |---|---|---|---|
 | **Reference Library** | Discovering drawable images under a picked folder; what counts as an image | `FolderImageEnumerator`, `IDocumentTree`, `DocumentEntry` | `FigureDrawing.Core` (root) |
 | **Session Setup** | Parsing and validating the two inputs; the Start gate; producing a config | `SessionSetup`, `SessionSetupState`, `SessionConfig` | `FigureDrawing.Core` (root) |
-| **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, resolving an id to a displayable image | `DrawingSession`, `SessionPlayer<TImage>`, `PoseCountdown`, `SessionSummary` | `FigureDrawing.Core/Session` |
+| **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, breaks, resolving an id to a displayable image, the viewing aids | `DrawingSession`, `SessionPlayer<TImage>`, `PoseCountdown`, `PoseSession<TImage>`, `ViewerTools`, `SessionSummary` | `FigureDrawing.Core/Session` |
 | **Preferences** | The persisted settings document and its lifecycle | `AppSettings`, `SettingsStore` | `FigureDrawing.Core/Data` |
 
 Supporting, deliberately outside the four: **Rendering** (`ImageDecoding`, `BitmapMath`, the
@@ -348,6 +390,8 @@ be the signal that the model changed, not a convenience.
 | `SessionConfig` | Value object (`readonly record struct`) | Immutable, validated upstream |
 | `SessionSummary` | Value object | Snapshot projection for the summary screen (FD-007) |
 | `PoseCountdown` | Entity | Owns remaining time, run/pause state, display format |
+| `PoseSession<TImage>` | Aggregate | Composes the three above; owns the pose/break/complete state machine |
+| `ViewerTools` | Entity | Owns the viewing aids and the zoom range; touches nothing the session counts |
 | `SessionPlayer<TImage>` | Application service | Resolves ids to images, applies the unreadable-skip policy |
 | image id (`string`) | Primitive standing in for a value object | See "candidate: `ImageRef`" below |
 
@@ -361,22 +405,28 @@ test in `DrawingSessionTests` / `DrawingSessionE2ETests`.
 | Skip never advances `CompletedCount` and never banks time | `Skip` calls `Advance` only |
 | `End` banks the current partial time but does not count the pose | `End` accumulates, then `Finish` |
 | Drawing time excludes all skipped time | Time is banked only in `Next` and `End` |
+| Drawing time excludes break, background and paused time | The session clock stops in `Pause`; `PoseSession` stops it for the whole break |
 | Every operation is a no-op once `IsComplete` | Guard at the top of `Next` / `Skip` / `End` |
 | An empty pool or a zero count completes immediately rather than hanging | `Advance` finishes when `_targetCount <= 0 \|\| _pool.Count == 0` |
 | Time is monotonic and injectable | `Func<TimeSpan> clock`, never `DateTime.Now` (§4) |
+| A skip raises `SkippedCount` and nothing else | `Skip` increments, then `Advance` |
+| A break never counts a pose, and never follows the last one | `PoseSession.CompletePose` finishes at the target before entering a break |
+| A skip lands on the next pose, never on a break | `PoseSession.Skip` calls `StartPose` |
 
 **`PoseCountdown` is a second entity, not part of the root.** It is deliberately split out: the
 countdown has its own lifecycle (pause/resume from the Android lifecycle) that the session does
 not care about, and the session's time accounting is independent of what a pose *displays*.
 
-**Missing invariant — the one real modelling gap.** "The pose clock restarts whenever the current
-image changes" is enforced today by `SessionActivity.Advance` (`player.Next(); countdown.Restart();`),
-i.e. by a screen. That is one line from the §14 anti-pattern "a state machine implemented inside
-an Activity", and FD-006's skip control will need the identical pair — the moment the same rule
-is written twice in a screen, it is a rule the domain lost. Fix when FD-006 lands: pair the two
-inside Core (either `SessionPlayer` owning the countdown, or a `PoseSession` aggregate that
-composes session + countdown and exposes `Next` / `Skip` / `End` / `Tick`), leaving the Activity
-with repaint and lifecycle only.
+**Closed: the pose-restart rule.** "The pose clock restarts whenever the current image changes" used
+to be enforced by `SessionActivity.Advance` (`player.Next(); countdown.Restart();`) — a state machine
+inside an Activity, and one the skip control would have had to repeat. It now lives in
+`PoseSession<TImage>`, which composes session + player + countdown and exposes
+`Next` / `Skip` / `End` / `Tick` / `Pause` / `Resume`, leaving the Activity with repaint, rendering
+and lifecycle. Adding the between-poses break is what forced the issue: the pairing became a
+three-state machine (pose → break → pose), which is not something a screen may own.
+
+`PoseSessionTests` asserts the pairing directly, and `SessionScreenContractTests` asserts the
+negative — that `SessionActivity` no longer constructs or restarts a `PoseCountdown` itself.
 
 **Candidate: `ImageRef` value object.** Image ids are bare `string`s throughout. A one-field
 `readonly record struct ImageRef(string Value)` would make "opaque id" enforceable rather than
@@ -486,13 +536,14 @@ screens or two handlers, it moves to Core.
 
 Live findings, ordered by how much they cost. None is a blocker; each has a stated trigger.
 
-1. **`MainActivity` (303 lines) spans three contexts** — Reference Library (SAF picking,
-   enumeration, preview), Session Setup (inputs, Start gate), Preferences (opening the database,
-   loading and saving settings). Not a god object at this size, but it is the only class in the
-   codebase that touches three contexts, so it is where the next rule will be tempted to land. On
-   the next feature that touches it, split by context: keep view wiring in the Activity and move
-   folder-loading and settings-syncing into their own adapter classes.
-2. **The pose-restart rule lives in an Activity** (§17). Fix with FD-006.
+1. **`MainActivity` spans three contexts** — Reference Library (SAF picking, enumeration, the
+   thumbnail grid), Session Setup (inputs, preset chips, Start gate), Preferences (opening the
+   database, loading and saving settings). The Claude Design import made this literal: the three
+   contexts are now the three tabs of one screen. Not a god object at this size, but it is the only
+   class in the codebase that touches three contexts, so it is where the next rule will be tempted
+   to land. On the next feature that touches it, split by context: keep view wiring in the Activity
+   and move folder-loading and settings-syncing into their own adapter classes.
+2. ~~The pose-restart rule lives in an Activity~~ — closed by `PoseSession` (§17).
 3. **`SettingsStore` has no port interface** and `AppSettings` carries a LiteDB attribute (§17).
 4. **Session state is not persisted across process death** (§5) — from a DDD angle, the session
    aggregate has no identity and no repository, which is exactly why rotation restarts a pose. If

@@ -27,6 +27,19 @@ public class AndroidBuildTests(ITestOutputHelper output)
         Assert.False(string.IsNullOrWhiteSpace(Prop("ApplicationId")));
     }
 
+    // The app's typeface is a framework font resource (Resources/font/inter.xml), which arrived in
+    // API 26. Dropping the floor below that builds and installs fine but renders the whole app in
+    // the platform sans-serif, because android:fontFamily pointing at a font resource is ignored.
+    [Fact]
+    public void App_MinimumApi_SupportsFontResources()
+    {
+        var supported = Prop("SupportedOSPlatformVersion");
+
+        Assert.True(int.TryParse(supported, out var api),
+            $"SupportedOSPlatformVersion is not a number: '{supported}'");
+        Assert.True(api >= 26, $"Font resources need API 26; SupportedOSPlatformVersion is {api}.");
+    }
+
     // Regression guard for the root-glob bug: because the app csproj sits at the repo root, its
     // default **/*.cs glob would otherwise pull in the sibling Core/Tests sources and break the
     // Android build. These excludes must stay.
