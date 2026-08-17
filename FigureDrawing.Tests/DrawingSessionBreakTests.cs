@@ -2,10 +2,11 @@ using FigureDrawing.Core;
 
 namespace FigureDrawing.Tests;
 
-// The player-screen aggregate: image + countdown + break phase behind one object. It exists to take
-// the "advance the pose AND restart the clock" rule out of SessionActivity (docs/ARCHITECTURE.md
-// §17/§20.2), so the pairing is asserted here rather than left to a screen.
-public class PoseSessionTests
+// The pose/break state machine (INV-SES-10..12, INV-POSE-*): advancing a pose restarts its clock,
+// a break never counts a pose or follows the last one, and a skip lands on the next pose rather
+// than on a rest. The pairing "advance the pose AND restart the clock" is a domain rule, asserted
+// here rather than left to a screen (docs/ARCHITECTURE.md §17).
+public class DrawingSessionBreakTests
 {
     // A hand-cranked monotonic clock so every timing assertion is deterministic (no real waiting).
     sealed class FakeClock
@@ -20,7 +21,7 @@ public class PoseSessionTests
     // Loader that resolves every id to itself, so "the image on screen" is directly assertable.
     static string? Echo(string id) => id;
 
-    static PoseSession<string> Make(
+    static DrawingSession<string> Make(
         FakeClock clock,
         int seconds = 30,
         int count = 3,
@@ -28,14 +29,9 @@ public class PoseSessionTests
         IReadOnlyList<string>? pool = null,
         Func<string, string?>? load = null,
         Action<string>? onUnreadable = null)
-    {
-        var session = new DrawingSession(
-            pool ?? Pool, new SessionConfig(seconds, count, breakSeconds),
-            shuffle: false, random: new Random(1), clock: clock.Read);
-
-        return new PoseSession<string>(
-            session, load ?? Echo, onUnreadable, breakSeconds, clock.Read);
-    }
+        =>
+        new(pool ?? Pool, new SessionConfig(seconds, count, breakSeconds), load ?? Echo,
+            shuffle: false, random: new Random(1), clock: clock.Read, onUnreadable: onUnreadable);
 
     // --- Starting state ------------------------------------------------------
 
@@ -45,7 +41,7 @@ public class PoseSessionTests
         var clock = new FakeClock();
         var s = Make(clock, seconds: 30);
 
-        Assert.Equal(PosePhase.Pose, s.Phase);
+        Assert.Equal(SessionPhase.Pose, s.Phase);
         Assert.Equal("a", s.CurrentImage);
         Assert.False(s.IsComplete);
         Assert.False(s.OnBreak);
@@ -61,7 +57,7 @@ public class PoseSessionTests
         var clock = new FakeClock();
         var s = Make(clock, pool: Array.Empty<string>());
 
-        Assert.Equal(PosePhase.Complete, s.Phase);
+        Assert.Equal(SessionPhase.Complete, s.Phase);
         Assert.True(s.IsComplete);
         Assert.Null(s.CurrentImage);
     }
@@ -88,7 +84,7 @@ public class PoseSessionTests
 
         Assert.Equal(1, s.CompletedCount);
         Assert.Equal("b", s.CurrentImage);
-        Assert.Equal(PosePhase.Pose, s.Phase);
+        Assert.Equal(SessionPhase.Pose, s.Phase);
         // The clock is back at full for the new pose — the bug this aggregate prevents.
         Assert.Equal("0:30", s.Display);
         Assert.Equal(2, s.CurrentPoseNumber);
@@ -148,7 +144,7 @@ public class PoseSessionTests
         clock.Advance(30);
         s.Tick();
 
-        Assert.Equal(PosePhase.Break, s.Phase);
+        Assert.Equal(SessionPhase.Break, s.Phase);
         Assert.True(s.OnBreak);
         Assert.Equal("0:15", s.Display);
         // The pose already counted; the next image is loaded underneath the overlay.
@@ -167,11 +163,40 @@ public class PoseSessionTests
         clock.Advance(15);
         Assert.True(s.Tick());     // out of it
 
-        Assert.Equal(PosePhase.Pose, s.Phase);
+        Assert.Equal(SessionPhase.Pose, s.Phase);
         Assert.False(s.OnBreak);
         Assert.Equal("0:30", s.Display);
         // A break is rest, not drawing: it does not count a second pose.
         Assert.Equal(1, s.CompletedCount);
+    }
+
+    // Backgrounding during a rest: the break's own clock freezes, and the session clock — already
+    // stopped for the break — must not be restarted by the resume (INV-SES-12, INV-CD-2).
+    [Fact]
+    public void PausingDuringABreak_BanksNoTime_AndResumesTheRest()
+    {
+        var clock = new FakeClock();
+        var s = Make(clock, seconds: 30, count: 3, breakSeconds: 15);
+
+        clock.Advance(30);
+        s.Tick();                  // pose 1 complete -> break
+        Assert.True(s.OnBreak);
+
+        clock.Advance(5);          // five seconds into the rest
+        s.Pause();
+        clock.Advance(300);        // five minutes in the background
+        s.Resume();
+
+        Assert.True(s.OnBreak);
+        Assert.Equal("0:10", s.Display);          // the rest picks up where it left off
+
+        clock.Advance(10);
+        Assert.True(s.Tick());                    // break over -> pose 2
+
+        Assert.Equal(SessionPhase.Pose, s.Phase);
+        Assert.Equal("0:30", s.Display);
+        Assert.Equal(1, s.CompletedCount);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);   // no rest, no background time
     }
 
     [Fact]
@@ -183,7 +208,7 @@ public class PoseSessionTests
         clock.Advance(30);
         s.Tick();
 
-        Assert.Equal(PosePhase.Pose, s.Phase);
+        Assert.Equal(SessionPhase.Pose, s.Phase);
         Assert.False(s.OnBreak);
     }
 
@@ -200,7 +225,7 @@ public class PoseSessionTests
         clock.Advance(30);
         s.Tick();                  // pose 2 done -> session over, no break after it
 
-        Assert.Equal(PosePhase.Complete, s.Phase);
+        Assert.Equal(SessionPhase.Complete, s.Phase);
         Assert.True(s.IsComplete);
         Assert.False(s.OnBreak);
         Assert.Null(s.CurrentImage);
@@ -233,9 +258,51 @@ public class PoseSessionTests
 
         Assert.Equal(0, s.CompletedCount);
         Assert.Equal(1, s.SkippedCount);
-        Assert.Equal(PosePhase.Pose, s.Phase);      // straight to the next image, no rest
+        Assert.Equal(SessionPhase.Pose, s.Phase);      // straight to the next image, no rest
         Assert.Equal("b", s.CurrentImage);
         Assert.Equal("0:30", s.Display);
+    }
+
+    // The image under the break overlay is the *next* pose's, so a done-tap during a rest ends the
+    // rest rather than counting a pose nobody has drawn yet (INV-SES-10).
+    [Fact]
+    public void Next_DuringABreak_EndsTheRestWithoutCountingAPose()
+    {
+        var clock = new FakeClock();
+        var s = Make(clock, seconds: 30, count: 3, breakSeconds: 60);
+
+        clock.Advance(30);
+        s.Tick();                  // pose 1 complete -> a one-minute break
+        Assert.Equal(1, s.CompletedCount);
+
+        clock.Advance(10);
+        s.Next();                  // "done" tapped while resting
+
+        Assert.Equal(SessionPhase.Pose, s.Phase);
+        Assert.Equal(1, s.CompletedCount);          // still one pose drawn, not two
+        Assert.Equal("b", s.CurrentImage);          // the same image the break was covering
+        Assert.Equal("0:30", s.Display);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
+    }
+
+    // The session clock is stopped for a rest, so an IsRunning that tracked it would read false here.
+    // It tracks the phase countdown instead — the break has one, and it is draining.
+    [Fact]
+    public void IsRunning_TracksThePhaseClock_NotTheDrawingClock()
+    {
+        var clock = new FakeClock();
+        var s = Make(clock, seconds: 30, count: 3, breakSeconds: 15);
+
+        Assert.True(s.IsRunning);
+
+        clock.Advance(30);
+        s.Tick();                  // into the break
+
+        Assert.True(s.OnBreak);
+        Assert.True(s.IsRunning);  // the rest is timed, even though no drawing time is banked
+
+        s.Pause();
+        Assert.False(s.IsRunning);
     }
 
     [Fact]
@@ -248,7 +315,7 @@ public class PoseSessionTests
         s.Tick();                  // into a one-minute break
         s.Skip();
 
-        Assert.Equal(PosePhase.Pose, s.Phase);
+        Assert.Equal(SessionPhase.Pose, s.Phase);
         Assert.Equal("0:30", s.Display);
     }
 
@@ -265,8 +332,8 @@ public class PoseSessionTests
 
         Assert.True(s.IsComplete);
         Assert.Null(s.CurrentImage);
-        Assert.Equal(1, s.Summary.ImagesDisplayed);
-        Assert.Equal(TimeSpan.FromSeconds(42), s.Summary.TotalDrawingTime);
+        Assert.Equal(1, s.ImagesDisplayed);
+        Assert.Equal(TimeSpan.FromSeconds(42), s.TotalDrawingTime);
     }
 
     [Fact]
@@ -279,14 +346,14 @@ public class PoseSessionTests
         s.Tick();
         Assert.True(s.IsComplete);
 
-        var summary = s.Summary;
+        var (displayed, drawn, skipped) = (s.ImagesDisplayed, s.TotalDrawingTime, s.SkippedCount);
         s.Next();
         s.Skip();
         s.End();
         s.Resume();
 
         Assert.False(s.Tick());
-        Assert.Equal(summary, s.Summary);
+        Assert.Equal((displayed, drawn, skipped), (s.ImagesDisplayed, s.TotalDrawingTime, s.SkippedCount));
         Assert.True(s.IsComplete);
     }
 

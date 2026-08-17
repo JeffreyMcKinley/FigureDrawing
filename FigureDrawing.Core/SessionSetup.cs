@@ -9,9 +9,12 @@ namespace FigureDrawing.Core;
 // Start.
 public readonly record struct SessionConfig(int SecondsPerImage, int ImageCount, int BreakSeconds = 0);
 
-// FD-002 session-setup logic, pure so it is unit-testable without Android. The setup screen feeds
-// it the raw text from the two EditText inputs plus whether a folder is currently selected, and it
-// answers: are the inputs valid, may the session start, and (if so) what config to hand off.
+// FD-002 session-setup logic, pure so it is unit-testable without Android: parsing, validity, the
+// presets the chips render, and how long a configured session runs.
+//
+// The evaluated *state* of the setup screen is not here — it is a draft DrawingSession
+// (DrawingSession<TImage>.Evaluate), because a session that has not started yet is what the setup
+// screen is showing. See docs/DOMAIN-MODEL.md §3.1 and §9.
 public static class SessionSetup
 {
     // Seeded into the inputs on first run, before any settings have been persisted.
@@ -38,12 +41,6 @@ public static class SessionSetup
         return int.TryParse(raw.Trim(), out var value) && value > 0 ? value : null;
     }
 
-    // Evaluates the current setup state from the raw inputs. The Android layer calls this on every
-    // keystroke to drive the Start button's enabled state, and again on Start to read Config.
-    public static SessionSetupState Evaluate(
-        string? secondsText, string? countText, bool folderSelected, int breakSeconds = DefaultBreakSeconds) =>
-        new(ParsePositive(secondsText), ParsePositive(countText), folderSelected, Math.Max(0, breakSeconds));
-
     // How long the whole session takes end to end: every pose plus a break between each adjacent
     // pair (there is no break after the last pose). Drives the "About 12:30 including breaks" line
     // under the Start button.
@@ -55,31 +52,4 @@ public static class SessionSetup
 
         return seconds * count + breaks * Math.Max(0, count - 1);
     }
-}
-
-// The outcome of evaluating the setup inputs. SecondsPerImage/ImageCount are null when their input
-// is missing or invalid.
-public sealed record SessionSetupState(
-    int? SecondsPerImage, int? ImageCount, bool FolderSelected,
-    int BreakSeconds = SessionSetup.DefaultBreakSeconds)
-{
-    public bool SecondsValid => SecondsPerImage is int s && SessionSetup.IsValidSeconds(s);
-    public bool CountValid => ImageCount is int c && SessionSetup.IsValidCount(c);
-
-    // Start is enabled only once a folder is selected AND both inputs are valid (acceptance
-    // criteria: "Start is disabled until a folder is selected and inputs are valid").
-    public bool CanStart => FolderSelected && SecondsValid && CountValid;
-
-    // The config to hand to the session engine, or null while the setup is not startable.
-    public SessionConfig? Config =>
-        CanStart ? new SessionConfig(SecondsPerImage!.Value, ImageCount!.Value, BreakSeconds) : null;
-
-    // Estimated length of the session described by these inputs, in seconds. Unlike Config this is
-    // available before the inputs are startable (a missing folder still lets the pace be estimated);
-    // it reads 0 while either number is invalid.
-    public int EstimateSeconds =>
-        SecondsValid && CountValid
-            ? SessionSetup.EstimateSeconds(
-                new SessionConfig(SecondsPerImage!.Value, ImageCount!.Value, BreakSeconds))
-            : 0;
 }

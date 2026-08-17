@@ -27,7 +27,8 @@ rules, a domain service's classification rules. Coverage of getters and wiring i
 
 Four tiers, cheapest first — a finding must name which tier the missing test belongs in:
 
-1. **Unit tests** (`FigureDrawing.Tests`, one file per Core type) — the default. Every rule in Core
+1. **Unit tests** (`FigureDrawing.Tests`, one file per Core type — or per invariant family, for a
+   type that owns several, as the session aggregate does) — the default. Every rule in Core
    lives here, made deterministic by the injected clock, `Random`, and loader.
 2. **Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`, `AndroidBuildTests`)
    — parse source and XML as files, no device. They catch the runtime-only failures the compiler
@@ -51,9 +52,10 @@ Rules that make a gap a finding rather than a suggestion:
 - **Fakes over mocks at the ports.** `IDocumentTree` and the image loader are backed by in-memory
   fakes; a mock framework asserting call sequences on them tests the mock, not the rule.
 - **A rule reachable only through a UI test is a design defect, not a coverage gap.** Report it as
-  "move this into Core", never as "add an Appium test" (`docs/ARCHITECTURE.md` §14). The live
-  example is the pose-restart pairing in `SessionActivity` (`INV-POSE-3`) — untestable today, and
-  that is the finding.
+  "move this into Core", never as "add an Appium test" (`docs/ARCHITECTURE.md` §14). The worked
+  example is the pose-restart pairing (`INV-POSE-3`), which used to live in `SessionActivity` and is
+  now inside the session aggregate and unit tested — that move is the shape a finding here should
+  argue for.
 
 **Analyze Test Coverage**
 

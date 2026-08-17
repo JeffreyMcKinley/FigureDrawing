@@ -8,15 +8,19 @@ using Android.Widget;
 using FigureDrawing.Core;
 using FigureDrawing.Data;
 
+// Android.Provider also has a Settings; the alias keeps the domain one unambiguous here.
+using Settings = FigureDrawing.Data.Settings;
+
 namespace FigureDrawing
 {
     // The three tabbed screens of the Claude Design mock in one Activity: Session (setup), Images
     // (the reference library and the folder picker) and Settings. They share the settings document
     // and the loaded pool, so they are panes rather than separate screens (activity_main.xml).
     //
-    // Everything with a rule behind it lives in Core: SessionSetup validates the inputs, gates Start
-    // and estimates the session's length; FolderImageEnumerator walks the picked tree; SettingsStore
-    // persists the preferences. This class finds views, reflects that state, and forwards taps.
+    // Everything with a rule behind it lives in Core: a draft DrawingSession validates the inputs,
+    // gates Start and estimates the session's length; ReferenceLibrary walks the picked tree and owns
+    // the pool; Settings persists the preferences. This class finds views, reflects that state, and
+    // forwards taps.
     [Activity(Label = "@string/app_name", MainLauncher = true)]
     public class MainActivity : Activity
     {
@@ -47,9 +51,9 @@ namespace FigureDrawing
         TextView libraryCount = null!;
         TextView libraryMore = null!;
 
-        // Content-uri strings for every image the picked folder yielded, in enumeration order. This
-        // is the pool handed to the session engine (FD-003) when Start is tapped (FD-004).
-        readonly List<string> imageUris = new();
+        // The picked folder and every image found beneath it, in enumeration order. Its pool is what
+        // is handed to the session when Start is tapped.
+        ReferenceLibrary library = ReferenceLibrary.Empty;
 
         // --- Setup ---
         EditText secondsInput = null!;
@@ -66,11 +70,7 @@ namespace FigureDrawing
         Button chimeToggle = null!;
         Button grayscaleToggle = null!;
 
-        // A folder with at least one image is loaded — the gate for enabling Start (FD-002).
-        bool folderSelected;
-
-        SettingsStore settingsStore = null!;
-        AppSettings settings = null!;
+        Settings settings = null!;
 
         protected override void OnCreate(Bundle? savedInstanceState)
         {
@@ -81,8 +81,7 @@ namespace FigureDrawing
             // Open the local settings/config database (created on first launch) from the app's
             // private files directory, then load the persisted settings.
             var databasePath = Path.Combine(FilesDir!.AbsolutePath, DatabaseFileName);
-            settingsStore = new SettingsStore(databasePath);
-            settings = settingsStore.GetSettings();
+            settings = Settings.Open(databasePath);
             Log.Info(LogTag,
                 $"Settings loaded from {databasePath}: " +
                 $"poseDuration={settings.PoseDurationSeconds}s, break={settings.BreakSeconds}s, " +
@@ -103,7 +102,7 @@ namespace FigureDrawing
 
         protected override void OnDestroy()
         {
-            settingsStore?.Dispose();
+            settings?.Dispose();
             base.OnDestroy();
         }
 
@@ -206,57 +205,59 @@ namespace FigureDrawing
         void OnBreakPreset(int breakSeconds)
         {
             settings.BreakSeconds = breakSeconds;
-            settingsStore.SaveSettings(settings);
+            settings.Save();
             UpdateStartState();
         }
 
         // Recomputes whether the session may start and reflects it across the setup pane: the Start
         // gate, which preset chips read as chosen, the pool card and the length estimate. Pure logic
-        // (parsing, validation, the estimate) lives in the testable SessionSetup.
+        // (parsing, validation, the estimate) lives in the draft session this evaluates.
         void UpdateStartState()
         {
-            var state = SessionSetup.Evaluate(
-                secondsInput.Text, countInput.Text, folderSelected, settings.BreakSeconds);
+            var draft = Draft();
 
-            startButton.Enabled = state.CanStart;
+            startButton.Enabled = draft.CanStart;
 
             foreach (var (value, chip) in secondsChips)
-                chip.Selected = state.SecondsPerImage == value;
+                chip.Selected = draft.SecondsPerImage == value;
 
             foreach (var (value, chip) in breakChips)
-                chip.Selected = state.BreakSeconds == value;
+                chip.Selected = draft.BreakSeconds == value;
 
-            poolLabel.Text = imageUris.Count > 0
-                ? string.Format(GetString(Resource.String.pool_ready_format), imageUris.Count)
+            poolLabel.Text = library.Count > 0
+                ? string.Format(GetString(Resource.String.pool_ready_format), library.Count)
                 : GetString(Resource.String.pool_empty_text);
 
             estimateLabel.Text = string.Format(
                 GetString(Resource.String.estimate_format),
-                PoseCountdown.Format(state.EstimateSeconds));
+                DrawingSession.Format(draft.EstimateSeconds));
         }
+
+        // The setup pane's state: a session that has not started yet. Evaluated on every keystroke,
+        // so it copies no pool and starts no clock.
+        DrawingSession<Android.Graphics.Bitmap> Draft() =>
+            DrawingSession<Android.Graphics.Bitmap>.Evaluate(
+                secondsInput.Text, countInput.Text, !library.IsEmpty, settings.BreakSeconds);
 
         // FD-002 Start: persist the chosen values so they seed the next session, then hand the config
         // to the session engine (FD-003). Guarded on the same validation the button state uses.
         void StartSession()
         {
-            var state = SessionSetup.Evaluate(
-                secondsInput.Text, countInput.Text, folderSelected, settings.BreakSeconds);
-
-            if (state.Config is not { } config)
+            if (Draft().Config is not { } config)
                 return;
 
             settings.PoseDurationSeconds = config.SecondsPerImage;
             settings.SessionImageCount = config.ImageCount;
-            settingsStore.SaveSettings(settings);
+            settings.Save();
 
             Log.Info(LogTag,
                 $"Session start: {config.SecondsPerImage}s/image, {config.ImageCount} images, " +
-                $"{config.BreakSeconds}s break, {imageUris.Count} in pool.");
+                $"{config.BreakSeconds}s break, {library.Count} in pool.");
 
             // FD-004: hand the pool + config to the session player screen. The preferences the player
-            // needs travel as extras too — a screen never reads AppSettings on the far side (§16).
+            // needs travel as extras too — a screen never reads Settings on the far side (§16).
             var intent = new Intent(this, typeof(SessionActivity));
-            intent.PutExtra(SessionActivity.ExtraPool, imageUris.ToArray());
+            intent.PutExtra(SessionActivity.ExtraPool, library.Pool.ToArray());
             intent.PutExtra(SessionActivity.ExtraSeconds, config.SecondsPerImage);
             intent.PutExtra(SessionActivity.ExtraCount, config.ImageCount);
             intent.PutExtra(SessionActivity.ExtraBreak, config.BreakSeconds);
@@ -289,7 +290,7 @@ namespace FigureDrawing
         void Toggle(Action change)
         {
             change();
-            settingsStore.SaveSettings(settings);
+            settings.Save();
             RenderSettings();
         }
 
@@ -352,7 +353,7 @@ namespace FigureDrawing
                 ContentResolver!.TakePersistableUriPermission(treeUri, ActivityFlags.GrantReadUriPermission);
 
                 settings.LastCollection = treeUri.ToString();
-                settingsStore.SaveSettings(settings);
+                settings.Save();
 
                 Log.Info(LogTag, $"Folder selected: {treeUri}");
                 LoadFolder(treeUri);
@@ -380,7 +381,21 @@ namespace FigureDrawing
             {
                 if (permission.IsReadPermission && permission.Uri?.Equals(treeUri) == true)
                 {
-                    LoadFolder(treeUri);
+                    // A grant that is still listed can still be unusable — an unmounted volume or an
+                    // uninstalled provider. This runs during OnCreate, and the stale uri is
+                    // persisted, so an escape here would be a crash on every launch from now on.
+                    try
+                    {
+                        LoadFolder(treeUri);
+                    }
+                    catch (Exception error)
+                    {
+                        Log.Warn(LogTag, $"Restoring {treeUri} failed: {error.Message}");
+                        library = ReferenceLibrary.Empty;
+                        RenderLibrary();
+                        UpdateStartState();
+                    }
+
                     return;
                 }
             }
@@ -388,29 +403,34 @@ namespace FigureDrawing
             Log.Info(LogTag, $"Persisted permission for {treeUri} no longer held; skipping restore.");
         }
 
-        // Enumerates image files under the picked tree (recursively, via the testable
-        // FolderImageEnumerator) and shows them. Any entry whose MIME type starts with "image/"
-        // is accepted (jpg/png/webp/gif/heic/...).
+        // Builds the reference library for the picked tree (the recursive walk and the pool live in
+        // Core) and shows what it found. Any entry whose MIME type starts with "image/" is accepted
+        // (jpg/png/webp/gif/heic/...); the library maps each document id to the content uri a
+        // session draws from, so the pool needs no second pass here.
         void LoadFolder(Android.Net.Uri treeUri)
         {
             ClearThumbnails();
-            imageUris.Clear();
+            library = ReferenceLibrary.Empty;
 
             var rootDocumentId = DocumentsContract.GetTreeDocumentId(treeUri);
             if (rootDocumentId is not null)
             {
                 var tree = new ContentResolverDocumentTree(ContentResolver!, treeUri);
-                foreach (var documentId in FolderImageEnumerator.EnumerateImages(tree, rootDocumentId))
+                library = new ReferenceLibrary(
+                    tree,
+                    rootDocumentId,
+                    treeUri.LastPathSegment,
+                    documentId =>
+                        DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId)?.ToString());
+
+                // Every image found is in the pool regardless of whether its preview decodes; the
+                // session handles any that turn out unreadable.
+                foreach (var id in library.Pool)
                 {
-                    var fileUri = DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId);
-                    if (fileUri is null)
-                        continue;
+                    if (imageContainer.ChildCount >= MaxThumbnails)
+                        break;
 
-                    // Record the uri for the session pool regardless of whether the preview decodes;
-                    // the session player (FD-004) handles any that turn out unreadable.
-                    imageUris.Add(fileUri.ToString()!);
-
-                    if (imageContainer.ChildCount < MaxThumbnails)
+                    if (Android.Net.Uri.Parse(id) is { } fileUri)
                         AddThumbnail(fileUri);
                 }
             }
@@ -419,17 +439,16 @@ namespace FigureDrawing
 
             // A session needs images to run, so the Start gate opens only when the folder yielded at
             // least one image (FD-002).
-            folderSelected = imageUris.Count > 0;
             UpdateStartState();
         }
 
         void RenderLibrary()
         {
-            if (imageUris.Count > 0)
+            if (library.Count > 0)
             {
                 emptyLabel.Visibility = ViewStates.Gone;
                 libraryCount.Text =
-                    string.Format(GetString(Resource.String.pool_ready_format), imageUris.Count);
+                    string.Format(GetString(Resource.String.pool_ready_format), library.Count);
             }
             else
             {
@@ -439,7 +458,7 @@ namespace FigureDrawing
             }
 
             // Be explicit that the grid is a sample of a bigger pool rather than the whole of it.
-            var hidden = imageUris.Count - imageContainer.ChildCount;
+            var hidden = library.Count - imageContainer.ChildCount;
             if (hidden > 0)
             {
                 libraryMore.Text = string.Format(GetString(Resource.String.library_more_format), hidden);
@@ -502,38 +521,52 @@ namespace FigureDrawing
         sealed class ContentResolverDocumentTree(ContentResolver resolver, Android.Net.Uri treeUri)
             : IDocumentTree
         {
+            // A failed query yields nothing rather than throwing: the provider may be gone, the
+            // volume unmounted, or the grant revoked between the permission check and the walk, and
+            // the domain treats "no children" as an ordinary answer (INV-TREE-4, INV-GRP-5).
             public IEnumerable<DocumentEntry> GetChildren(string parentDocumentId)
             {
-                var childrenUri =
-                    DocumentsContract.BuildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
-
-                ICursor? cursor = resolver.Query(
-                    childrenUri!,
-                    new[]
-                    {
-                        DocumentsContract.Document.ColumnDocumentId,
-                        DocumentsContract.Document.ColumnMimeType,
-                    },
-                    null, null, null);
-
-                if (cursor is null)
-                    yield break;
+                var entries = new List<DocumentEntry>();
 
                 try
                 {
-                    while (cursor.MoveToNext())
-                    {
-                        var documentId = cursor.GetString(0);
-                        if (documentId is null)
-                            continue;
+                    var childrenUri =
+                        DocumentsContract.BuildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
 
-                        yield return new DocumentEntry(documentId, cursor.GetString(1));
+                    ICursor? cursor = resolver.Query(
+                        childrenUri!,
+                        new[]
+                        {
+                            DocumentsContract.Document.ColumnDocumentId,
+                            DocumentsContract.Document.ColumnMimeType,
+                        },
+                        null, null, null);
+
+                    if (cursor is null)
+                        return entries;
+
+                    try
+                    {
+                        while (cursor.MoveToNext())
+                        {
+                            var documentId = cursor.GetString(0);
+                            if (documentId is null)
+                                continue;
+
+                            entries.Add(new DocumentEntry(documentId, cursor.GetString(1)));
+                        }
+                    }
+                    finally
+                    {
+                        cursor.Close();
                     }
                 }
-                finally
+                catch (Exception error)
                 {
-                    cursor.Close();
+                    Log.Warn(LogTag, $"Listing {parentDocumentId} failed: {error.Message}");
                 }
+
+                return entries;
             }
         }
     }

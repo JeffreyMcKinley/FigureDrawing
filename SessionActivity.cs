@@ -14,7 +14,7 @@ namespace FigureDrawing
     // countdown ring and the viewing tools, a break overlay between poses, a pause sheet, and the
     // end-of-session summary.
     //
-    // All of the session's behaviour is in Core. PoseSession owns which image is up, how long it has
+    // All of the session's behaviour is in Core. DrawingSession owns which image is up, how long it has
     // left, and the pose/break/complete state machine; ViewerTools owns the grayscale/flip/grid/blur
     // flags and the zoom range. This class does what an Activity is allowed to do: find views, run a
     // repaint loop, render Core's state, forward taps, and manage the lifecycle.
@@ -38,10 +38,10 @@ namespace FigureDrawing
         public const string ExtraSeconds = "seconds";      // int, seconds per image
         public const string ExtraCount = "count";          // int, images this session shows
         public const string ExtraBreak = "break";          // int, seconds of rest between poses
-        public const string ExtraShuffle = "shuffle";      // bool, AppSettings.ShuffleImages
-        public const string ExtraGrayscale = "grayscale";  // bool, AppSettings.GrayscaleMode
-        public const string ExtraKeepAwake = "keepawake";  // bool, AppSettings.KeepScreenAwake
-        public const string ExtraChime = "chime";          // bool, AppSettings.ChimeOnChange
+        public const string ExtraShuffle = "shuffle";      // bool, Settings.ShuffleImages
+        public const string ExtraGrayscale = "grayscale";  // bool, Settings.GrayscaleMode
+        public const string ExtraKeepAwake = "keepawake";  // bool, Settings.KeepScreenAwake
+        public const string ExtraChime = "chime";          // bool, Settings.ChimeOnChange
 
         const string LogTag = "FigureDrawing";
 
@@ -100,7 +100,7 @@ namespace FigureDrawing
         TextView summaryAverage = null!;
         TextView summarySkipped = null!;
 
-        PoseSession<Bitmap> session = null!;
+        DrawingSession<Bitmap> session = null!;
         ViewerTools tools = null!;
         Android.OS.Handler ticker = null!;
 
@@ -275,14 +275,12 @@ namespace FigureDrawing
         // with, and paints the first pose.
         void StartSession()
         {
-            var engine = new DrawingSession(
-                pool, new SessionConfig(secondsPerImage, imageCount, breakSeconds), shuffle);
-
-            session = new PoseSession<Bitmap>(
-                engine,
+            session = new DrawingSession<Bitmap>(
+                pool,
+                new SessionConfig(secondsPerImage, imageCount, breakSeconds),
                 LoadBitmap,
-                onUnreadable: id => Log.Warn(LogTag, $"Skipping unreadable image {id}"),
-                breakSeconds: breakSeconds);
+                shuffle,
+                onUnreadable: id => Log.Warn(LogTag, $"Skipping unreadable image {id}"));
 
             tools = new ViewerTools(startGrayscale);
 
@@ -407,7 +405,7 @@ namespace FigureDrawing
 
             stats.Text = string.Format(
                 GetString(Resource.String.session_stats_format),
-                FormatDuration(session.Summary.TotalDrawingTime), session.SkippedCount);
+                FormatDuration(session.TotalDrawingTime), session.SkippedCount);
 
             RenderPips();
             RenderClock();
@@ -429,7 +427,7 @@ namespace FigureDrawing
                 GetString(Resource.String.paused_stats_format),
                 string.Format(GetString(Resource.String.session_progress_format),
                     session.CurrentPoseNumber, session.TargetCount),
-                FormatDuration(session.Summary.TotalDrawingTime));
+                FormatDuration(session.TotalDrawingTime));
         }
 
         // The session is over: either nothing in the pool could be decoded (an error), or it ran to
@@ -450,11 +448,10 @@ namespace FigureDrawing
             status.Visibility = ViewStates.Gone;
             summary.Visibility = ViewStates.Visible;
 
-            var s = session.Summary;
-            summaryImages.Text = s.ImagesDisplayed.ToString();
-            summaryTime.Text = FormatDuration(s.TotalDrawingTime);
-            summaryAverage.Text = FormatDuration(s.AveragePoseTime);
-            summarySkipped.Text = s.SkippedCount.ToString();
+            summaryImages.Text = session.ImagesDisplayed.ToString();
+            summaryTime.Text = FormatDuration(session.TotalDrawingTime);
+            summaryAverage.Text = FormatDuration(session.AveragePoseTime);
+            summarySkipped.Text = session.SkippedCount.ToString();
         }
 
         // One segment per pose in the session-progress strip, filled as poses are completed. Weighted
@@ -549,13 +546,13 @@ namespace FigureDrawing
 
         // --- Helpers ---------------------------------------------------------
 
-        // Durations read the same everywhere on this screen (m:ss), using the countdown's own
+        // Durations read the same everywhere on this screen (m:ss), using the session's own
         // formatter so the summary and the timer can never disagree about how time is written.
         static string FormatDuration(TimeSpan value) =>
-            PoseCountdown.Format((int)Math.Round(value.TotalSeconds));
+            DrawingSession.Format((int)Math.Round(value.TotalSeconds));
 
         // Decode a content-uri string to a bitmap, or null if it is unreadable/broken — the
-        // PoseSession treats null as "skip this image". Never throws out to the session.
+        // session treats null as "skip this image". Never throws out to the session.
         Bitmap? LoadBitmap(string id)
         {
             try

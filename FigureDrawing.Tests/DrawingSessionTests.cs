@@ -2,9 +2,10 @@ using FigureDrawing.Core;
 
 namespace FigureDrawing.Tests;
 
-// FD-003 session engine: the UI-independent model that owns a drawing session's random sequence,
-// remaining-count, skip semantics, and time accounting. Driven by FD-004..FD-007 screens; this is
-// the testable core. A full start-to-summary lifecycle is exercised in DrawingSessionE2ETests.
+// The session aggregate's sequence, counts, skip semantics and time accounting (INV-SES-1..9,
+// INV-SUM-*). Its other rule families have their own files: the draft in DrawingSessionSetupTests,
+// the pose clock in DrawingSessionCountdownTests, image resolution in DrawingSessionImageTests, and
+// the break in DrawingSessionBreakTests. A full start-to-summary lifecycle is in SessionE2ETests.
 public class DrawingSessionTests
 {
     // A hand-cranked monotonic clock so time accounting is deterministic (no real waiting).
@@ -17,14 +18,16 @@ public class DrawingSessionTests
 
     static readonly string[] Pool = { "a", "b", "c", "d", "e" };
 
-    static DrawingSession Make(
+    // TImage is string with an identity loader, so "the image on screen" and "the image id" are the
+    // same value and the sequence stays readable in assertions (INV-IMG-1 — ids are opaque).
+    static DrawingSession<string> Make(
         int count,
         IReadOnlyList<string>? pool = null,
         bool shuffle = true,
         int seed = 1234,
         FakeClock? clock = null,
         int seconds = 30) =>
-        new(pool ?? Pool, new SessionConfig(seconds, count), shuffle, new Random(seed),
+        new(pool ?? Pool, new SessionConfig(seconds, count), id => id, shuffle, new Random(seed),
             (clock ?? new FakeClock()).Read);
 
     // --- Sequence / selection ------------------------------------------------
@@ -154,8 +157,8 @@ public class DrawingSessionTests
         s.Next();
 
         Assert.True(s.IsComplete);
-        Assert.Equal(TimeSpan.FromSeconds(55), s.Summary.TotalDrawingTime);
-        Assert.Equal(2, s.Summary.ImagesDisplayed);
+        Assert.Equal(TimeSpan.FromSeconds(55), s.TotalDrawingTime);
+        Assert.Equal(2, s.ImagesDisplayed);
     }
 
     [Fact]
@@ -169,8 +172,8 @@ public class DrawingSessionTests
         clock.Advance(30);       // drew the next image 30s -> counted
         s.Next();
 
-        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
-        Assert.Equal(1, s.Summary.ImagesDisplayed);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
+        Assert.Equal(1, s.ImagesDisplayed);
     }
 
     [Fact]
@@ -185,8 +188,8 @@ public class DrawingSessionTests
         s.End();
 
         Assert.True(s.IsComplete);
-        Assert.Equal(1, s.Summary.ImagesDisplayed);                    // partial image not counted
-        Assert.Equal(TimeSpan.FromSeconds(42), s.Summary.TotalDrawingTime);
+        Assert.Equal(1, s.ImagesDisplayed);                    // partial image not counted
+        Assert.Equal(TimeSpan.FromSeconds(42), s.TotalDrawingTime);
     }
 
     // --- Pool smaller than count (repeat) ------------------------------------
@@ -220,7 +223,7 @@ public class DrawingSessionTests
         var s = Make(count: 3, pool: Array.Empty<string>());
         Assert.True(s.IsComplete);
         Assert.Null(s.CurrentImage);
-        Assert.Equal(0, s.Summary.ImagesDisplayed);
+        Assert.Equal(0, s.ImagesDisplayed);
     }
 
     [Fact]
@@ -248,7 +251,7 @@ public class DrawingSessionTests
         clock.Advance(20);
         s.Next();
 
-        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
     }
 
     [Fact]
@@ -266,7 +269,7 @@ public class DrawingSessionTests
         clock.Advance(5);
         s.Next();
 
-        Assert.Equal(TimeSpan.FromSeconds(10), s.Summary.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(10), s.TotalDrawingTime);
     }
 
     [Fact]
@@ -280,7 +283,7 @@ public class DrawingSessionTests
         clock.Advance(300);
         s.End();
 
-        Assert.Equal(TimeSpan.FromSeconds(12), s.Summary.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(12), s.TotalDrawingTime);
     }
 
     // A fresh image always starts a fresh, running clock — a pause never carries across an advance.
@@ -298,7 +301,7 @@ public class DrawingSessionTests
         clock.Advance(20);
         s.Next();
 
-        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
     }
 
     [Fact]
@@ -344,10 +347,9 @@ public class DrawingSessionTests
         clock.Advance(20);
         s.Next();                  // completed, 20s banked
 
-        var summary = s.Summary;
-        Assert.Equal(2, summary.ImagesDisplayed);
-        Assert.Equal(1, summary.SkippedCount);
-        Assert.Equal(TimeSpan.FromSeconds(30), summary.TotalDrawingTime);
+        Assert.Equal(2, s.ImagesDisplayed);
+        Assert.Equal(1, s.SkippedCount);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
     }
 
     [Fact]
@@ -364,7 +366,7 @@ public class DrawingSessionTests
         s.Next();
 
         // 40s over two completed poses — the skipped minute is not in the average.
-        Assert.Equal(TimeSpan.FromSeconds(20), s.Summary.AveragePoseTime);
+        Assert.Equal(TimeSpan.FromSeconds(20), s.AveragePoseTime);
     }
 
     [Fact]
@@ -375,7 +377,7 @@ public class DrawingSessionTests
         s.Skip();
         s.End();
 
-        Assert.Equal(TimeSpan.Zero, s.Summary.AveragePoseTime);
+        Assert.Equal(TimeSpan.Zero, s.AveragePoseTime);
     }
 
     [Fact]
@@ -390,7 +392,7 @@ public class DrawingSessionTests
     }
 
     // Runs the session to completion via Next(), collecting each displayed image.
-    static List<string> Drain(DrawingSession s)
+    static List<string> Drain(DrawingSession<string> s)
     {
         var seen = new List<string>();
         while (!s.IsComplete)

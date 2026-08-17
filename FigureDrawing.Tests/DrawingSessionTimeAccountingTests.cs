@@ -5,7 +5,7 @@ namespace FigureDrawing.Tests;
 // Drawing time is the headline number on the summary screen, and the break makes it easy to get
 // wrong: the session engine's clock keeps running through a rest, so a naive wiring banks the break
 // as time spent drawing. These tests pin the arithmetic for a whole run.
-public class PoseSessionTimeAccountingTests
+public class DrawingSessionTimeAccountingTests
 {
     sealed class FakeClock
     {
@@ -16,14 +16,10 @@ public class PoseSessionTimeAccountingTests
 
     static readonly string[] Pool = { "a", "b", "c", "d" };
 
-    static PoseSession<string> Make(FakeClock clock, int seconds, int count, int breakSeconds)
-    {
-        var session = new DrawingSession(
-            Pool, new SessionConfig(seconds, count, breakSeconds),
+    static DrawingSession<string> Make(FakeClock clock, int seconds, int count, int breakSeconds)
+        =>
+        new(Pool, new SessionConfig(seconds, count, breakSeconds), id => id,
             shuffle: false, random: new Random(1), clock: clock.Read);
-
-        return new PoseSession<string>(session, id => id, null, breakSeconds, clock.Read);
-    }
 
     // Two 30s poses with a 5s rest take 65s of wall time, but only 60s of them are drawing.
     [Fact]
@@ -40,9 +36,9 @@ public class PoseSessionTimeAccountingTests
         s.Tick();               // pose 2 complete -> session over
 
         Assert.True(s.IsComplete);
-        Assert.Equal(2, s.Summary.ImagesDisplayed);
-        Assert.Equal(TimeSpan.FromSeconds(60), s.Summary.TotalDrawingTime);
-        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.AveragePoseTime);
+        Assert.Equal(2, s.ImagesDisplayed);
+        Assert.Equal(TimeSpan.FromSeconds(60), s.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.AveragePoseTime);
     }
 
     // The same run without a rest: nothing to exclude, so wall time and drawing time agree.
@@ -57,7 +53,7 @@ public class PoseSessionTimeAccountingTests
         clock.Advance(30);
         s.Tick();
 
-        Assert.Equal(TimeSpan.FromSeconds(60), s.Summary.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(60), s.TotalDrawingTime);
     }
 
     // A long rest must not inflate the average pose either — that number is what tells a drawer
@@ -81,8 +77,8 @@ public class PoseSessionTimeAccountingTests
         }
 
         Assert.True(s.IsComplete);
-        Assert.Equal(TimeSpan.FromSeconds(180), s.Summary.TotalDrawingTime);
-        Assert.Equal(TimeSpan.FromSeconds(60), s.Summary.AveragePoseTime);
+        Assert.Equal(TimeSpan.FromSeconds(180), s.TotalDrawingTime);
+        Assert.Equal(TimeSpan.FromSeconds(60), s.AveragePoseTime);
     }
 
     // Ending mid-pose banks that pose's partial time but does not count it, and a rest the drawer
@@ -98,7 +94,7 @@ public class PoseSessionTimeAccountingTests
         clock.Advance(10);      // ten seconds into the rest
         s.End();
 
-        Assert.Equal(1, s.Summary.ImagesDisplayed);
-        Assert.Equal(TimeSpan.FromSeconds(30), s.Summary.TotalDrawingTime);
+        Assert.Equal(1, s.ImagesDisplayed);
+        Assert.Equal(TimeSpan.FromSeconds(30), s.TotalDrawingTime);
     }
 }

@@ -224,7 +224,7 @@ public class SessionScreenContractTests
     // lifecycle (FD-005 acceptance). Source-level guard: these are Android-only code paths the unit
     // tests can't execute.
     [Theory]
-    [InlineData("new PoseSession<")]
+    [InlineData("new DrawingSession<")]
     [InlineData("session.Tick()")]
     [InlineData("session.Pause()")]
     [InlineData("session.Resume()")]
@@ -234,14 +234,33 @@ public class SessionScreenContractTests
         Assert.Contains(snippet, SessionActivitySource);
 
     // "Restart the pose clock whenever the image changes" is a domain rule, and it used to be
-    // written here as `player.Next(); countdown.Restart();` (docs/ARCHITECTURE.md §17/§20.2). It now
-    // lives in PoseSession, where it is unit-tested. A countdown driven from the screen again would
-    // be that rule leaking back out of Core.
+    // written here as `player.Next(); countdown.Restart();` (docs/ARCHITECTURE.md §17). It now lives
+    // inside the session aggregate, where it is unit-tested. A clock of the screen's own would be
+    // that rule leaking back out of Core — and unlike the old type names, these snippets name things
+    // that still exist, so the guard can actually fail against compiling code.
     [Theory]
-    [InlineData("new PoseCountdown(")]
-    [InlineData("countdown.Restart()")]
+    [InlineData("Stopwatch")]
+    [InlineData("DateTime.Now")]
+    [InlineData("SystemClock.")]
     public void SessionActivity_DoesNotDriveTheCountdownItself(string snippet) =>
         Assert.DoesNotContain(snippet, SessionActivitySource);
+
+    // One session object per screen. Two would mean two clocks and two counts, which is the shape
+    // the consolidation removed (docs/DOMAIN-MODEL.md §9).
+    [Fact]
+    public void SessionActivity_ConstructsExactlyOneSession() =>
+        Assert.Single(Regex.Matches(SessionActivitySource, @"new DrawingSession<"));
+
+    // INV-PLY-5: decode failures are caught at the adapter and returned as null, so the loader never
+    // throws through the session. The catch lives in LoadBitmap, which no unit test can execute.
+    [Fact]
+    public void SessionActivity_CatchesDecodeFailuresInTheLoader()
+    {
+        var loader = SessionActivitySource[SessionActivitySource.IndexOf("Bitmap? LoadBitmap(")..];
+
+        Assert.Contains("catch", loader);
+        Assert.Contains("return null;", loader);
+    }
 
     // The fitCenter scale type is what keeps the image filling the screen WITHOUT distortion
     // (FD-004 acceptance). Guard it against an accidental edit to a stretching scale type.

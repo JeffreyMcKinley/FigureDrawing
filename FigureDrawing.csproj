@@ -32,7 +32,7 @@
     <Compile Remove="FigureDrawing.UITests\**\*.cs" />
   </ItemGroup>
 
-  <!-- LiteDB comes transitively via FigureDrawing.Core (which owns Data/SettingsStore). -->
+  <!-- LiteDB comes transitively via FigureDrawing.Core (which owns Data/Settings). -->
   <ItemGroup>
     <ProjectReference Include="FigureDrawing.Core\FigureDrawing.Core.csproj" />
   </ItemGroup>

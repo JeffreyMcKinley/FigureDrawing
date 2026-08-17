@@ -16,7 +16,7 @@ public sealed class ViewerTools
     public const double MaxZoom = 2.5;
     public const double ZoomStep = 0.2;
 
-    // grayscale : seeded from AppSettings.GrayscaleMode, so "start in grayscale" is honoured without
+    // grayscale : seeded from Settings.GrayscaleMode, so "start in grayscale" is honoured without
     //             the screen having to poke the flag after construction.
     public ViewerTools(bool grayscale = false) => Grayscale = grayscale;
 
@@ -46,8 +46,8 @@ public sealed class ViewerTools
     public void ZoomIn() => Zoom = Clamp(Zoom + ZoomStep);
     public void ZoomOut() => Zoom = Clamp(Zoom - ZoomStep);
 
-    // Back to fit-to-screen — what a new pose gets, so a zoom set for one image does not silently
-    // crop the next.
+    // Back to fit-to-screen. Offered for a screen that wants a per-pose reset; the player does not
+    // call it today, so zoom carries across poses within a session (docs/ARCHITECTURE.md §20).
     public void ResetZoom() => Zoom = MinZoom;
 
     const double Epsilon = 1e-9;

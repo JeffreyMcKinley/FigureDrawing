@@ -4,7 +4,7 @@
   ring is level-clipped, so its sweep follows the progress value, and the rotate starts that sweep
   at twelve o'clock instead of three (the design's transform: rotate(-90deg)).
 
-  The screen sets progress from PoseSession.RemainingPercent, so the ring starts full and empties as
+  The screen sets progress from DrawingSession.RemainingPercent, so the ring starts full and empties as
   the pose runs out.
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">

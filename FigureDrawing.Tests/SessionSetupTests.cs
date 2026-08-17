@@ -2,9 +2,8 @@ using FigureDrawing.Core;
 
 namespace FigureDrawing.Tests;
 
-// FD-002 session-setup: the pure validation/parsing that backs the setup screen (seconds-per-image,
-// image-count, and the Start gate). The Android EditText/Button wiring is exercised e2e; this is the
-// testable core.
+// FD-002 session-setup: the pure parsing, validity and pacing helpers behind the setup screen. The
+// evaluated state of that screen is a draft session and is tested in DrawingSessionSetupTests.
 public class SessionSetupTests
 {
     [Theory]
@@ -38,93 +37,10 @@ public class SessionSetupTests
         Assert.Equal(expected, SessionSetup.IsValidCount(count));
 
     [Fact]
-    public void Evaluate_AllValidAndFolderSelected_CanStartWithConfig()
-    {
-        var state = SessionSetup.Evaluate("45", "12", folderSelected: true);
-
-        Assert.True(state.SecondsValid);
-        Assert.True(state.CountValid);
-        Assert.True(state.CanStart);
-        Assert.Equal(new SessionConfig(45, 12), state.Config);
-    }
-
-    [Fact]
-    public void Evaluate_NoFolder_CannotStartEvenWhenInputsValid()
-    {
-        var state = SessionSetup.Evaluate("30", "20", folderSelected: false);
-
-        Assert.True(state.SecondsValid);
-        Assert.True(state.CountValid);
-        Assert.False(state.CanStart);
-        Assert.Null(state.Config);
-    }
-
-    [Theory]
-    [InlineData("0", "20")]    // seconds invalid
-    [InlineData("30", "0")]    // count invalid
-    [InlineData("", "20")]     // seconds blank
-    [InlineData("30", "")]     // count blank
-    [InlineData("x", "y")]     // both non-numeric
-    public void Evaluate_InvalidInput_CannotStart(string secondsText, string countText)
-    {
-        var state = SessionSetup.Evaluate(secondsText, countText, folderSelected: true);
-
-        Assert.False(state.CanStart);
-        Assert.Null(state.Config);
-    }
-
-    [Fact]
-    public void Evaluate_ReportsPerFieldValidityIndependently()
-    {
-        var state = SessionSetup.Evaluate("30", "0", folderSelected: true);
-
-        Assert.True(state.SecondsValid);
-        Assert.False(state.CountValid);
-    }
-
-    [Fact]
     public void Defaults_ArePositive()
     {
         Assert.True(SessionSetup.IsValidSeconds(SessionSetup.DefaultSecondsPerImage));
         Assert.True(SessionSetup.IsValidCount(SessionSetup.DefaultImageCount));
-    }
-
-    // --- Break between poses -------------------------------------------------
-
-    [Fact]
-    public void Evaluate_CarriesTheBreakIntoTheConfig()
-    {
-        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: 15);
-
-        Assert.Equal(15, state.BreakSeconds);
-        Assert.Equal(new SessionConfig(45, 12, 15), state.Config);
-    }
-
-    // The break is a pace setting, not a validated input — "no break" is a legitimate choice, so it
-    // must never be able to close the Start gate.
-    [Fact]
-    public void Evaluate_NoBreak_StillStarts()
-    {
-        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: 0);
-
-        Assert.True(state.CanStart);
-        Assert.Equal(0, state.Config!.Value.BreakSeconds);
-    }
-
-    [Fact]
-    public void Evaluate_NegativeBreak_IsFlooredAtZero()
-    {
-        var state = SessionSetup.Evaluate("45", "12", folderSelected: true, breakSeconds: -30);
-
-        Assert.Equal(0, state.BreakSeconds);
-    }
-
-    [Fact]
-    public void Evaluate_OmittedBreak_DefaultsToNone()
-    {
-        var state = SessionSetup.Evaluate("45", "12", folderSelected: true);
-
-        Assert.Equal(SessionSetup.DefaultBreakSeconds, state.BreakSeconds);
     }
 
     // --- Session length estimate ---------------------------------------------
@@ -137,23 +53,6 @@ public class SessionSetupTests
     public void EstimateSeconds_CountsBreaksBetweenPosesOnly(
         int seconds, int count, int breakSeconds, int expected) =>
         Assert.Equal(expected, SessionSetup.EstimateSeconds(new SessionConfig(seconds, count, breakSeconds)));
-
-    // The estimate is shown under the Start button, which is visible before a folder is picked.
-    [Fact]
-    public void StateEstimate_IsAvailableBeforeAFolderIsPicked()
-    {
-        var state = SessionSetup.Evaluate("60", "10", folderSelected: false, breakSeconds: 15);
-
-        Assert.False(state.CanStart);
-        Assert.Equal(735, state.EstimateSeconds);
-    }
-
-    [Fact]
-    public void StateEstimate_IsZeroWhileAnInputIsInvalid()
-    {
-        Assert.Equal(0, SessionSetup.Evaluate("", "10", folderSelected: true).EstimateSeconds);
-        Assert.Equal(0, SessionSetup.Evaluate("60", "x", folderSelected: true).EstimateSeconds);
-    }
 
     // --- Quick-pick chips ----------------------------------------------------
 

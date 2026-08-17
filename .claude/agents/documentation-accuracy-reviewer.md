@@ -35,8 +35,8 @@ What makes them wrong:
   DDD role — entity, value object, aggregate root, domain service, or port. Missing or ambiguous is
   a finding.
 - **A status tag that no longer matches reality.** Objects are tagged *Implemented* / *Implicit* /
-  *Proposed*. A change that gives an implicit concept a real type (`ImageGroup`, `ReferenceImage`,
-  `ImagePool`, `Pose`) or builds a proposed one (`SessionRecord`) must move the tag.
+  *Proposed*. A change that gives an implicit concept a real type (`Pose`, or the `ImageRef`
+  candidate) or builds a proposed one (`SessionRecord`) must move the tag.
 - **An invariant that no longer holds, or a new rule with no invariant.** Invariants are numbered
   (`INV-SES-5`) and cited from tests and reviews. A rule changed in code but not in the document is
   a factual inaccuracy; a rule deleted quietly is worse — §8 requires it be acknowledged.

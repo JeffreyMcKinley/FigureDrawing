@@ -4,8 +4,8 @@ namespace FigureDrawing.UITests;
 
 // FD-004 session player end-to-end over Appium/UiAutomator2. Opt-in via RUN_APPIUM=1 (see
 // UiTestEnvironment) — otherwise every test skips-as-pass. Drives setup -> Start -> the full-screen
-// player on a real emulator; the pure player logic is covered by SessionPlayerTests and
-// PoseSessionTests.
+// player on a real emulator; the pure session logic is covered by DrawingSessionTests and its
+// sibling files (image resolution, countdown, breaks).
 //
 // Every test here leaves the app on the player, which is a different Activity from the tabbed setup
 // screen. Getting back is AppiumGuard.ReturnToMainScreen's job (OpenTab calls it).

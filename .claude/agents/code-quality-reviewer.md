@@ -81,9 +81,9 @@ a layering scheme the project has not adopted.
 
 - **Layering**: four layers, dependencies pointing inward only (`docs/ARCHITECTURE.md` §19).
   *Presentation* — `MainActivity`, `SessionActivity`, layouts. *Application* — use-case
-  orchestration; `SessionPlayer<TImage>` in Core, the rest currently inside the Activities.
-  *Domain* — `DrawingSession`, `PoseCountdown`, `SessionSetup`, `FolderImageEnumerator`, and the
-  value objects. *Infrastructure* — `SettingsStore` (LiteDB), `ContentResolverDocumentTree` (SAF),
+  orchestration; `DrawingSession<TImage>` in Core, the rest currently inside the Activities.
+  *Domain* — `DrawingSession`, `DrawingSession<TImage>`, `SessionSetup`, `ReferenceLibrary`, and the
+  value objects. *Infrastructure* — `Settings` (LiteDB), `ContentResolverDocumentTree` (SAF),
   `ImageDecoding` (BitmapFactory). There is **no ViewModel or translation layer**: screens call
   Core types directly, and that is the intended shape at this size. Introducing a presenter layer
   is a design decision, not a drive-by refactor — flag it if a change smuggles one in.
@@ -93,7 +93,7 @@ a layering scheme the project has not adopted.
   direct `PackageReference` in the app project is a finding.
 - **Bounded contexts**: Reference Library, Session Setup, Session Execution, Preferences
   (`docs/ARCHITECTURE.md` §16). Context dependencies must stay acyclic and match the context map:
-  Session Execution never reads `AppSettings` (`INV-X-2`), Reference Library never references
+  Session Execution never reads `Settings` (`INV-X-2`), Reference Library never references
   Session Execution (`INV-X-1`). A new Core type that fits no context, or fits two, is a finding.
 - **Patterns**: plain Activity + Core objects. State flows one way — settings seed setup, setup
   produces a `SessionConfig`, config plus pool construct a session, the screen renders the
@@ -102,23 +102,23 @@ a layering scheme the project has not adopted.
   (`IDocumentTree`), an injected delegate (`Func<string, TImage?>`), or an injected clock/`Random`.
   A fourth mechanism invented for a new feature is a finding.
 - **Entities and objects**: `docs/DOMAIN-MODEL.md` is the catalogue. `DrawingSession` and
-  `AppSettings` are aggregate roots and mutate through commands only — a new public setter, a
+  `Settings` are aggregate roots and mutate through commands only — a new public setter, a
   writable field, or a caller that reaches past a root into its internals is Critical.
-  `SessionConfig`, `SessionSummary`, `SessionSetupState`, and `DocumentEntry` are value objects:
+  `SessionConfig`, `DrawingSession<TImage>` (the totals), `DrawingSession<TImage>` (draft phase), and `DocumentEntry` are value objects:
   immutable, compared by value, never mutated after construction. `DrawingSession` and
-  `PoseCountdown` have no identity and must never be used as a dictionary key or compared for
+  `DrawingSession<TImage>` have no identity and must never be used as a dictionary key or compared for
   equality (`INV-X-6`). Image ids are opaque — parsing, sorting by, or deriving a file name from
   one is a finding (`INV-IMG-1`).
-- **State ownership**: session state lives in the `DrawingSession` / `SessionPlayer` /
-  `PoseCountdown` instances owned by `SessionActivity`, created in `OnCreate` from intent extras.
+- **State ownership**: session state lives in the `DrawingSession` / `DrawingSession<TImage>` /
+  `DrawingSession<TImage>` instances owned by `SessionActivity`, created in `OnCreate` from intent extras.
   Screen-to-screen hand-off is intent extras keyed by the public constants on `SessionActivity` —
   never a static, singleton, or `Application` field (`INV-X-3`). Persisted state is the single
-  `AppSettings` document, which *seeds* setup and never controls a running session
+  `Settings` document, which *seeds* setup and never controls a running session
   (`INV-SET-P3`). Session state is deliberately not yet saved in `OnSaveInstanceState`; that is a
   known gap, so do not report it as new, but do flag a change that makes it worse.
-- **Data access**: LiteDB is reached only through `SettingsStore` — no other type opens a
+- **Data access**: LiteDB is reached only through `Settings` — no other type opens a
   `LiteDatabase` (`INV-STO-1`). One document, `Id == 1`, in the `settings` collection; the store
-  stamps the id, callers never do. New preferences are new defaulted properties on `AppSettings`,
+  stamps the id, callers never do. New preferences are new defaulted properties on `Settings`,
   not a second document or collection. No BSON or LiteDB vocabulary above the store.
 - **Threading model**: everything runs on the main thread and Core is synchronous by design.
   Nothing in the domain sleeps, posts, schedules, or starts a thread (`INV-X-9`). Android UI
@@ -132,7 +132,7 @@ a layering scheme the project has not adopted.
   - `Android.*` / `Java.*` referenced from `FigureDrawing.Core`
   - `DateTime.Now`, a directly constructed `Stopwatch`, or `new Random()` inside Core instead of
     the injected clock / `Random` (`INV-X-7`, `INV-X-8`)
-  - A `LiteDatabase` opened outside `SettingsStore`
+  - A `LiteDatabase` opened outside `Settings`
   - A hardcoded user-facing string in an Activity — text comes from `strings.xml`
   - Cross-screen data passed via a static, singleton, or `Application` field
   - A `Handler` callback posted as an `Action` and expected to be removable
@@ -158,7 +158,7 @@ domain service, port) decides which of these apply.
 - **Dependency inversion**: the domain defines the abstraction, the platform implements it.
   Direction is always inward; a Core type that takes an Android-shaped parameter has inverted it
   the wrong way
-- **Tell, don't ask**: callers issue commands (`Next`, `Skip`, `End`, `Pause`, `Restart`) and read
+- **Tell, don't ask**: callers issue commands (`Next`, `Skip`, `End`, `Tick`, `Pause`, `Resume`) and read
   state for rendering. Code that reads several properties off a domain object, computes a decision,
   and writes the result back is a rule that escaped the object
 - **Encapsulation**: no public setters or writable fields on domain objects; no exposing a mutable
@@ -179,7 +179,7 @@ domain service, port) decides which of these apply.
   bitmap in a domain signature
 - Boundary types are owned by the inner layer. A port and its data (`IDocumentTree`,
   `DocumentEntry`) are declared in Core; the outer layer conforms
-- Frameworks stay at the edges — LiteDB behind `SettingsStore`, SAF behind `ContentResolverDocumentTree`,
+- Frameworks stay at the edges — LiteDB behind `Settings`, SAF behind `ContentResolverDocumentTree`,
   `BitmapFactory` behind `ImageDecoding`. Leaked vocabulary (a `[BsonId]`, a `Cursor`, a
   `ContentResolver`) crossing inward is a finding
 - Testability is the signal: a rule that cannot be unit tested without a device is a rule in the

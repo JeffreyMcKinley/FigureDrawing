@@ -47,7 +47,7 @@ not an optimization:
   sleeps, posts, schedules, or starts a thread (`INV-X-9`). Do not propose async, parallelism, or a
   cache inside a domain object — propose it in the Android layer instead.
 - **No bitmap or platform type may enter Core** (`INV-X-4`). A bitmap cache belongs beside
-  `ImageDecoding`, never on `DrawingSession` or `SessionPlayer`.
+  `ImageDecoding`, never on `DrawingSession` or `DrawingSession<TImage>`.
 - **Countdown time comes from a monotonic clock, never from counting ticks** (`INV-CD-1`).
   Lengthening the tick interval is a legitimate optimization precisely because accuracy does not
   depend on it; replacing the clock read with an accumulator is a correctness regression.

@@ -56,17 +56,17 @@ project means adding a fourth exclude.
 
 | Type | Owns |
 |---|---|
-| `SessionSetup` / `SessionSetupState` / `SessionConfig` | Parsing and validating the two setup inputs; the Start gate |
-| `DrawingSession` | The session: image sequence, shuffle, counts, skip semantics, elapsed-time accounting |
-| `SessionPlayer<TImage>` | Resolving the current image id to something displayable; skipping unreadable images |
-| `PoseCountdown` | Per-pose remaining time, pause/resume, display formatting |
-| `PoseSession<TImage>` | The player aggregate: pose/break/complete state machine over session + player + countdown |
+| `SessionSetup` / `SessionConfig` | Parsing, validity, the presets, and how long a configured session runs |
+| `DrawingSession<TImage>` | The session aggregate: the draft (inputs, Start gate, estimate), the sequence, the pose clock, the break, resolving an id to a displayable image, and the totals |
 | `ViewerTools` | Grayscale/flip/grid/blur flags and the zoom range for the pose on screen |
-| `FolderImageEnumerator` / `IDocumentTree` / `DocumentEntry` | Recursive image discovery under a picked folder |
+| `ReferenceLibrary` / `IDocumentTree` / `DocumentEntry` | The picked folder, the recursive image discovery beneath it, and the pool |
 | `BitmapMath` | Power-of-two sub-sample calculation |
-| `Data/AppSettings` / `Data/SettingsStore` | The persisted settings document and its LiteDB store |
+| `Data/Settings` | The persisted settings document and its LiteDB store |
 
-Core types are deterministic and side-effect free apart from `SettingsStore`. They expose state as
+Nine domain objects, deliberately: what each one is and why the neighbours it absorbed are not
+separate concepts is [DOMAIN-MODEL.md §1](DOMAIN-MODEL.md) and [§9](DOMAIN-MODEL.md#9-consolidation).
+
+Core types are deterministic and side-effect free apart from `Settings`. They expose state as
 properties for the screen to read (`CurrentImage`, `Remaining`, `IsComplete`, `Display`) and accept
 commands as methods (`Next`, `Skip`, `End`, `Pause`, `Resume`, `Restart`).
 
@@ -109,26 +109,29 @@ constructor parameter. Three patterns already in use — reuse them rather than 
 `MainActivity.ContentResolverDocumentTree` backs it with `DocumentsContract` + `ContentResolver`;
 tests back it with an in-memory tree.
 
-**Injected delegate.** `SessionPlayer<TImage>` takes `Func<string, TImage?> load`. The screen
+**Injected delegate.** `DrawingSession<TImage>` takes `Func<string, TImage?> load`. The screen
 passes `LoadBitmap`; tests pass a fake. The generic parameter is what keeps `Bitmap` out of Core.
 
-**Injected clock.** `DrawingSession` and `PoseCountdown` both take an optional
-`Func<TimeSpan>? clock`, defaulting to a `Stopwatch`. Tests drive time deterministically. Any new
-time-dependent Core type must follow this — never call `DateTime.Now` inside Core.
+**Injected clock.** `DrawingSession<TImage>` takes an optional `Func<TimeSpan>? clock`, defaulting
+to a `Stopwatch`, and drives both its clocks — the drawing-time total and the pose countdown — from
+it. Tests drive time deterministically. Any new time-dependent Core type must follow this — never
+call `DateTime.Now` inside Core.
 
-`Random` follows the same rule: `DrawingSession` takes an optional `Random` so shuffles are
-reproducible under test.
+`Random` follows the same rule: the session takes an optional `Random` so shuffles are reproducible
+under test.
 
 ## 5. State and navigation
 
-- **Session state** lives in the single `PoseSession<Bitmap>` owned by `SessionActivity`, created in
-  `OnCreate` from intent extras (it composes `DrawingSession` / `SessionPlayer` / `PoseCountdown`).
+- **Session state** lives in the single `DrawingSession<Bitmap>` owned by `SessionActivity`, created
+  in `OnCreate` from intent extras. The setup pane holds no session: it evaluates a *draft* one per
+  keystroke (`DrawingSession<Bitmap>.Evaluate`), which copies no pool and starts no clock.
 - **Screen-to-screen handoff** is intent extras only. `SessionActivity` declares its keys as public
   constants (`ExtraPool`, `ExtraSeconds`, `ExtraCount`, `ExtraBreak`, `ExtraShuffle`,
   `ExtraGrayscale`, `ExtraKeepAwake`, `ExtraChime`); `MainActivity.StartSession` fills them. Add a new input by adding a constant, not a string literal
   at the call site, and not a static or singleton.
-- **Persisted state** is the single `AppSettings` LiteDB document. It seeds the setup inputs on
-  launch and records the last folder.
+- **Persisted state** is the single `Settings` LiteDB document. It seeds the setup inputs on launch
+  and records the last folder. `Android.Provider` also declares a `Settings`, so `MainActivity`
+  carries a `using Settings = FigureDrawing.Data.Settings;` alias.
 - **(confirm)** Session state is *not* currently saved in `OnSaveInstanceState`, so process death
   restarts the pose. That is a known gap, not a pattern to copy. `SessionActivity` mitigates the
   common case by declaring `ConfigurationChanges` for size/orientation and re-laying out in place,
@@ -136,11 +139,12 @@ reproducible under test.
 
 ## 6. Data access
 
-- LiteDB is reached only through `SettingsStore`. No other type opens a `LiteDatabase`.
+- LiteDB is reached only through `Settings`. No other type opens a `LiteDatabase`.
 - The database file lives in app-private storage: `Path.Combine(FilesDir.AbsolutePath, "figuredrawing.db")`.
-- `SettingsStore` is `IDisposable` and is disposed in `OnDestroy`. It is a single-document store —
-  `DocumentId == 1` in the `settings` collection.
-- New preferences are new properties on `AppSettings` with a default value. Do not add a second
+- `Settings` is `IDisposable` and is disposed in `OnDestroy`. It is a single-document store —
+  `Id == 1` in the `settings` collection — opened with `Settings.Open(path)` and written with
+  `Save()`. Saving through a disposed instance throws rather than dropping the write silently.
+- New preferences are new properties on `Settings` with a default value. Do not add a second
   document or a second collection without a reason.
 
 ## 7. Threading
@@ -168,7 +172,7 @@ reproducible under test.
   `MaxImageDimension` (1080 px). Never call `SetImageURI` or decode at full resolution — a folder of
   real photos will exhaust memory.
 - A single unreadable image must never sink the screen: decode failures return `null` and are
-  logged, and `SessionPlayer` skips past them with a bounded failure budget.
+  logged, and the session skips past them with a bounded failure budget.
 
 ## 9. Errors and logging
 
@@ -193,8 +197,12 @@ reproducible under test.
 
 Three tiers, cheapest first. Prefer the cheapest tier that can catch the bug.
 
-**Unit tests** (`FigureDrawing.Tests`, one file per Core type) — the default. Everything in Core is
-covered here, with injected clock/`Random`/loader making them deterministic.
+**Unit tests** (`FigureDrawing.Tests`) — the default. Everything in Core is covered here, with
+injected clock/`Random`/loader making them deterministic. One file per Core type, except where a
+type owns several invariant families: the session aggregate has one file per family
+(`DrawingSessionTests`, `DrawingSessionSetupTests`, `DrawingSessionCountdownTests`,
+`DrawingSessionImageTests`, `DrawingSessionBreakTests`, `DrawingSessionTimeAccountingTests`), which
+is what keeps a 350-test suite navigable after the consolidation.
 
 **Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`, `AndroidBuildTests`) —
 a pattern worth understanding before touching the Android layer. They parse the *source and XML as
@@ -203,8 +211,10 @@ that Xamarin's compile-time checks miss: a view id referenced from code but abse
 a missing string, a build property regression. `TestPaths` locates the repo root by walking up to
 `FigureDrawing.sln`, since the working directory differs between `nx` and `dotnet test`.
 
-**E2E-model tests** (`*E2ETests.cs`) — drive the Core objects through a whole session in one test,
-without Android. They cover interaction between engine, player, and countdown.
+**E2E-model tests** (`SessionE2ETests.cs`) — drive the Core objects through a whole session in one
+test, without Android: the library enumerates a fake tree, the draft produces the config, and the
+session runs to its summary. A `Screen` harness inside it mirrors `SessionActivity`'s repaint loop,
+so a break in that wiring fails here rather than only on a device.
 
 **UI tests** (`FigureDrawing.UITests`) — Appium against a real emulator. Slow and last resort; use
 only for behavior genuinely unreachable from Core. Run them with `scripts/run-appium-tests.ps1`,
@@ -232,7 +242,7 @@ Three rules the harness depends on, each learned from a failure that looked like
 
 Rules:
 
-- New Core type ⇒ new unit test file.
+- New Core type ⇒ new unit test file; a new invariant family on an existing type ⇒ its own file.
 - New view id or user-facing string ⇒ add it to the contract tests.
 - Logic that is hard to unit test is a design smell — that is the signal to move it into Core, not
   to write a UI test for it.
@@ -265,7 +275,7 @@ Findings against any of these are architecture violations, not style opinions.
 - `Android.*` / `Java.*` referenced from `FigureDrawing.Core`.
 - `DateTime.Now`, `Stopwatch`, or `new Random()` used directly inside Core instead of the injected
   clock/`Random`.
-- A `LiteDatabase` opened outside `SettingsStore`.
+- A `LiteDatabase` opened outside `Settings`.
 - A hardcoded user-facing string in an Activity.
 - Screen-to-screen data passed via a static, singleton, or `Application` field instead of intent extras.
 - A `Handler` callback posted as an `Action` and expected to be removable.
@@ -298,7 +308,8 @@ strings use them consistently; a synonym in a new type name is a review comment.
 | Term | Means | Not |
 |---|---|---|
 | **Reference image** | One picture the artist draws from, identified by a SAF content URI string | "photo", "file" |
-| **Pool** | The ordered set of reference images discovered under the picked folder | "gallery", "album" |
+| **Reference library** | The picked folder plus every drawable image discovered beneath it | "group", "collection", "album" |
+| **Pool** | The ordered image ids a library hands to one session | "gallery", "album" |
 | **Pass** | One traversal of the whole pool; a new pass reshuffles. Pools smaller than the target count repeat by passes | — |
 | **Pose** | One display of one reference image for the configured duration | "slide", "frame" |
 | **Session** | A run of N poses under one config, from Start to completion or early end | "workout", "practice" |
@@ -315,7 +326,7 @@ strings use them consistently; a synonym in a new type name is a review comment.
 Two distinctions carry real invariants and are worth stating twice:
 
 - **Config vs Settings.** `SessionConfig` is validated, immutable, and scoped to one session.
-  `AppSettings` is persisted, mutable, and scoped to the installation. Settings seed setup; setup
+  `Settings` is persisted, mutable, and scoped to the installation. Settings seed setup; setup
   produces config; config never writes back to settings implicitly.
 - **Complete vs Skip vs End.** Three different terminal moves on a pose, with three different
   effects on `CompletedCount` and `TotalDrawingTime`. See the invariant table in §17.
@@ -327,10 +338,10 @@ Four contexts, each a cohesive vocabulary with its own rules. All four live in
 
 | Context | Owns | Core types today | Namespace / folder |
 |---|---|---|---|
-| **Reference Library** | Discovering drawable images under a picked folder; what counts as an image | `FolderImageEnumerator`, `IDocumentTree`, `DocumentEntry` | `FigureDrawing.Core` (root) |
-| **Session Setup** | Parsing and validating the two inputs; the Start gate; producing a config | `SessionSetup`, `SessionSetupState`, `SessionConfig` | `FigureDrawing.Core` (root) |
-| **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, breaks, resolving an id to a displayable image, the viewing aids | `DrawingSession`, `SessionPlayer<TImage>`, `PoseCountdown`, `PoseSession<TImage>`, `ViewerTools`, `SessionSummary` | `FigureDrawing.Core/Session` |
-| **Preferences** | The persisted settings document and its lifecycle | `AppSettings`, `SettingsStore` | `FigureDrawing.Core/Data` |
+| **Reference Library** | Discovering drawable images under a picked folder; what counts as an image; the pool | `ReferenceLibrary`, `IDocumentTree`, `DocumentEntry` | `FigureDrawing.Core` (root) |
+| **Session Setup** | Parsing and validating the two inputs; the Start gate; producing a config | `SessionSetup`, `SessionConfig`, and the session's `Draft` phase | `FigureDrawing.Core` (root) |
+| **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, breaks, resolving an id to a displayable image, the totals, the viewing aids | `DrawingSession<TImage>`, `ViewerTools` | `FigureDrawing.Core/Session` |
+| **Preferences** | The persisted settings document and its lifecycle | `Settings` | `FigureDrawing.Core/Data` |
 
 Supporting, deliberately outside the four: **Rendering** (`ImageDecoding`, `BitmapMath`, the
 `ImageView` wiring). It has no domain rules — only the memory-bound decode policy of §8. It is a
@@ -366,8 +377,8 @@ change:
   `MainActivity.ContentResolverDocumentTree`. Nothing SAF-shaped may cross into Core — that is
   §4's interface-adapter pattern stated as a context rule.
 - **Preferences → Setup — open host, one direction.** Settings seed the inputs and record the last
-  folder. Neither Session Setup nor Session Execution reads `AppSettings` at runtime; the Android
-  layer copies the values it needs into intent extras at launch (§5).
+  folder. Neither Session Setup nor Session Execution reads `Settings` at runtime; the Android layer
+  copies the values it needs into intent extras at launch (§5).
 - **Screen → screen — serialization boundary.** Intent extras are the wire format between
   `MainActivity` and `SessionActivity`. They carry primitives only, keyed by the public constants
   on `SessionActivity`. That boundary is why a `SessionConfig` is reconstructed on the far side
@@ -377,56 +388,55 @@ change:
 
 ### Session Execution
 
-**Aggregate root: `DrawingSession`.** It is the consistency boundary for everything about the run
-— the upcoming queue, `CompletedCount`, and `_accumulatedDrawingTime` are only ever mutated
-through `Next` / `Skip` / `End`, and no caller can observe them mid-transition. Its identity is
-positional (one live session per player screen), so it carries no id: a session is never stored,
-never compared, and never resumed. That is the reason it has no repository, and adding one would
-be the signal that the model changed, not a convenience.
+**Aggregate root: `DrawingSession<TImage>`.** It is the consistency boundary for everything about
+the run — the upcoming queue, `CompletedCount`, the drawing-time total and both clocks are only ever
+mutated through `Next` / `Skip` / `End` / `Tick` / `Pause` / `Resume`, and no caller can observe them
+mid-transition. Its identity is positional (one live session per player screen), so it carries no
+id: a session is never stored, never compared, and never resumed. That is the reason it has no
+repository, and adding one would be the signal that the model changed, not a convenience.
 
 | Element | Kind | Note |
 |---|---|---|
-| `DrawingSession` | Aggregate root, entity | Owns sequence, counts, drawing time |
+| `DrawingSession<TImage>` | Aggregate root, entity | Owns the draft, the sequence, the counts, both clocks, the break, image resolution and the totals |
 | `SessionConfig` | Value object (`readonly record struct`) | Immutable, validated upstream |
-| `SessionSummary` | Value object | Snapshot projection for the summary screen (FD-007) |
-| `PoseCountdown` | Entity | Owns remaining time, run/pause state, display format |
-| `PoseSession<TImage>` | Aggregate | Composes the three above; owns the pose/break/complete state machine |
+| `SessionPhase` | Enum | `Draft` → `Pose` ⇄ `Break` → `Complete` |
 | `ViewerTools` | Entity | Owns the viewing aids and the zoom range; touches nothing the session counts |
-| `SessionPlayer<TImage>` | Application service | Resolves ids to images, applies the unreadable-skip policy |
 | image id (`string`) | Primitive standing in for a value object | See "candidate: `ImageRef`" below |
 
 **Invariants the aggregate enforces.** These are the rules a change must not break; each has a
-test in `DrawingSessionTests` / `DrawingSessionE2ETests`.
+test in the `DrawingSession*Tests` files, which are split by invariant family (§11).
 
 | Invariant | Enforced by |
 |---|---|
 | `Remaining` is never negative; `CompletedCount` never exceeds `TargetCount` | `Next` finishes at the target; `Remaining` clamps |
 | Every image is shown once before any repeat | `Refill` rebuilds a full pass before dequeuing |
-| Skip never advances `CompletedCount` and never banks time | `Skip` calls `Advance` only |
+| Skip never advances `CompletedCount` and never banks time | `SkipCurrent` advances the sequence; time is banked only in `CountCurrent` and `End` |
 | `End` banks the current partial time but does not count the pose | `End` accumulates, then `Finish` |
 | Drawing time excludes all skipped time | Time is banked only in `Next` and `End` |
-| Drawing time excludes break, background and paused time | The session clock stops in `Pause`; `PoseSession` stops it for the whole break |
+| Drawing time excludes break, background and paused time | `Pause` stops both clocks; the session clock stays stopped for the whole break |
 | Every operation is a no-op once `IsComplete` | Guard at the top of `Next` / `Skip` / `End` |
 | An empty pool or a zero count completes immediately rather than hanging | `Advance` finishes when `_targetCount <= 0 \|\| _pool.Count == 0` |
 | Time is monotonic and injectable | `Func<TimeSpan> clock`, never `DateTime.Now` (§4) |
-| A skip raises `SkippedCount` and nothing else | `Skip` increments, then `Advance` |
-| A break never counts a pose, and never follows the last one | `PoseSession.CompletePose` finishes at the target before entering a break |
-| A skip lands on the next pose, never on a break | `PoseSession.Skip` calls `StartPose` |
+| A skip raises `SkippedCount`, then lands on a fresh pose | `SkipCurrent` increments and advances; `StartPose` restarts the clock |
+| A break never counts a pose, and never follows the last one | `CountCurrent` finishes at the target before `CompletePose` can enter a break; a done-tap during a rest just ends the rest |
+| A skip lands on the next pose, never on a break | `Skip` calls `StartPose` directly |
 
-**`PoseCountdown` is a second entity, not part of the root.** It is deliberately split out: the
-countdown has its own lifecycle (pause/resume from the Android lifecycle) that the session does
-not care about, and the session's time accounting is independent of what a pose *displays*.
+**The pose clock is inside the root, not beside it.** It was once a separate `PoseCountdown`
+entity, on the reasoning that its pause/resume lifecycle was its own. It is not: `INV-SES-12` stops
+the drawing-time clock on exactly the edges that stop the countdown — pause, resume, break — so two
+objects were being driven in lockstep by a third. One aggregate with two private clocks removes the
+lockstep without weakening a rule (DOMAIN-MODEL.md §9).
 
 **Closed: the pose-restart rule.** "The pose clock restarts whenever the current image changes" used
 to be enforced by `SessionActivity.Advance` (`player.Next(); countdown.Restart();`) — a state machine
-inside an Activity, and one the skip control would have had to repeat. It now lives in
-`PoseSession<TImage>`, which composes session + player + countdown and exposes
-`Next` / `Skip` / `End` / `Tick` / `Pause` / `Resume`, leaving the Activity with repaint, rendering
-and lifecycle. Adding the between-poses break is what forced the issue: the pairing became a
-three-state machine (pose → break → pose), which is not something a screen may own.
+inside an Activity, and one the skip control would have had to repeat. It now lives inside the
+session, which exposes `Next` / `Skip` / `End` / `Tick` / `Pause` / `Resume` and leaves the Activity
+with repaint, rendering and lifecycle. Adding the between-poses break is what forced the issue: the
+pairing became a three-state machine (pose → break → pose), which is not something a screen may own.
 
-`PoseSessionTests` asserts the pairing directly, and `SessionScreenContractTests` asserts the
-negative — that `SessionActivity` no longer constructs or restarts a `PoseCountdown` itself.
+`DrawingSessionBreakTests` asserts the pairing directly, and `SessionScreenContractTests` asserts
+the negative — that `SessionActivity` constructs exactly one session object and no clock of its
+own.
 
 **Candidate: `ImageRef` value object.** Image ids are bare `string`s throughout. A one-field
 `readonly record struct ImageRef(string Value)` would make "opaque id" enforceable rather than
@@ -435,48 +445,56 @@ today it would be ceremony.
 
 ### Reference Library
 
-`FolderImageEnumerator` is a **stateless domain service** — the classification rules (`IsImage`,
-`IsDirectory`) and the traversal policy are genuine domain knowledge that belongs to no entity.
-`IDocumentTree` is a **port**, `DocumentEntry` a **value object**. Invariants: traversal is
-depth-first in encounter order, and the `visited` set guarantees termination on a provider that
-reports a cycle.
+`ReferenceLibrary` is the **aggregate root**: the picked folder's identity, the depth-first walk
+beneath it, and the pool that walk produces. The classification rules (`IsImage`, `IsDirectory`)
+stay static and pure — they are domain knowledge belonging to no instance. `IDocumentTree` is a
+**port** and `DocumentEntry` a **value object**, kept outside the aggregate because an
+anti-corruption layer that lives inside the thing it protects is not one.
 
-The pool itself has no type — it leaves as `IReadOnlyList<string>`. A `ReferencePool` value object
-(pool + root document id + count) is the natural home for FD-008's "which folder am I drawing
-from" display and for the `LastCollection` write-back; add it when a second consumer needs the
-folder identity alongside the images.
+Invariants: traversal is depth-first in encounter order, termination is guaranteed twice over (the
+`visited` set stops a reported cycle, a depth ceiling stops a provider that synthesizes a fresh id
+per level), and ids are de-duplicated so one document reached twice is one pool entry. The pool
+leaves the context as `IReadOnlyList<string>`; the library keeps the root *document id* alongside it,
+which is what FD-008's "which folder am I drawing from" display needs. The tree URI itself stays in
+the Android layer, which is what writes `Settings.LastCollection`.
 
 ### Session Setup
 
-Entirely stateless: a static domain service (`SessionSetup`) plus one value object holding the
-evaluated result (`SessionSetupState`) and one holding the output (`SessionConfig`). The Start
-gate (`CanStart`) is a domain rule, not a UI rule — the Android layer binds a button's
-`Enabled` to it and owns nothing else. Parsing lives here too (`ParsePositive`), which is correct:
-"what counts as a valid seconds input" is domain knowledge, and keeping it out of the `EditText`
-handler is what makes it testable.
+A static domain service (`SessionSetup`) for parsing, validity and pacing, plus one value object
+for the output (`SessionConfig`). The evaluated state of the screen is not a third type: it is a
+`DrawingSession<TImage>` in its `Draft` phase, because a session that has not started yet is exactly
+what the setup screen is showing. The Start gate (`CanStart`) is a domain rule, not a UI rule — the
+Android layer binds a button's `Enabled` to it and owns nothing else. Parsing lives here too
+(`ParsePositive`), which is correct: "what counts as a valid seconds input" is domain knowledge, and
+keeping it out of the `EditText` handler is what makes it testable.
+
+The cost of that merge is one odd-looking call: `MainActivity` says
+`DrawingSession<Bitmap>.Evaluate(...)` on a screen that never touches a bitmap. That was the
+accepted trade for deleting a type whose only job was to hold four fields.
 
 ### Preferences
 
-`AppSettings` is an **aggregate root** with a fixed identity (`Id == 1`) and `SettingsStore` is its
-**repository** — a single-document store with `GetSettings` / `SaveSettings` and a create-on-first-
-read policy.
+`Settings` is an **aggregate root** with a fixed identity (`Id == 1`) that owns its own persistence:
+`Open` (create-on-first-read), `Save` (upsert), `Dispose`. Document and repository were two types;
+with one document, one collection and one store forever, the split bought a name and no seam.
 
 Two deviations worth naming, neither urgent:
 
 - **No port interface.** Core's persistence is a concrete class, so any future Core consumer would
-  depend on LiteDB rather than on an abstraction. Today only Activities call it, so the seam has no
-  second implementation to justify it; introduce `ISettingsRepository` at the moment a Core type
-  needs to read settings.
-- **Persistence attribute on the domain entity.** `AppSettings` carries LiteDB's `[BsonId]`, so the
-  storage technology is visible on the model. Acceptable at one document and one collection; if
-  `AppSettings` grows domain behaviour, split it into a domain type and a persisted DTO rather than
-  spreading BSON attributes.
+  depend on LiteDB rather than on an abstraction. Today only Activities call it, so there is no
+  second implementation to justify the seam; introduce `ISettingsRepository` at the moment a Core
+  type needs to read settings — that is also the moment the document/repository split earns its keep
+  again.
+- **Persistence attribute on the domain entity.** `Settings` carries LiteDB's `[BsonId]`, so the
+  storage technology is visible on the model. Acceptable at one document and one collection; if it
+  grows domain behaviour, split it into a domain type and a persisted DTO rather than spreading BSON
+  attributes.
 
 ## 18. Domain events
 
 **There is no event bus today, and that is the right call at this size.** Communication between
-contexts is direct calls and observed state: the repaint loop polls `PoseCountdown.IsExpired` and
-calls `Advance`; the screen reads `CurrentImage`, `IsComplete`, `CouldNotDisplayImage`. One
+contexts is direct calls and observed state: the repaint loop calls `Tick` and repaints; the screen
+reads `CurrentImage`, `Display`, `IsComplete`, `CouldNotDisplayImage`. One
 producer, one consumer, same thread — a publisher/subscriber layer would add indirection between
 two objects that already know each other.
 
@@ -487,7 +505,7 @@ use in tickets, logs, and analytics whether or not a type exists:
 |---|---|---|
 | `PoseCompleted(imageId, duration)` | Timer expiry or manual done-tap | Counts, summary |
 | `PoseSkipped(imageId)` | FD-006 skip control, or an unreadable image | Logging; never counts |
-| `ImageUnreadable(imageId)` | Loader returned null | `onUnreadable` hook → `Log.Warn` |
+| `ImageUnreadable(imageId)` | Loader returned null | `onUnreadable` hook -> `Log.Warn` |
 | `SessionCompleted(summary)` | Target count reached | FD-007 summary screen |
 | `SessionEndedEarly(summary)` | `End()` called | FD-007 summary screen |
 | `PoolUndisplayable` | Consecutive-failure budget exhausted | Error state |
@@ -519,36 +537,51 @@ The skill's four layers map onto the projects of §2 as follows. Dependencies po
 | Layer | Contains | Lives in |
 |---|---|---|
 | **Presentation** | `MainActivity`, `SessionActivity`, layouts, strings | App project |
-| **Application** | Use-case orchestration: wiring a session, advancing a pose, launching a screen | Split — `SessionPlayer<TImage>` in Core, the rest inside the Activities |
-| **Domain** | `DrawingSession`, `PoseCountdown`, `SessionSetup`, `FolderImageEnumerator`, value objects | `FigureDrawing.Core` |
-| **Infrastructure** | `SettingsStore` (LiteDB), `ContentResolverDocumentTree` (SAF), `ImageDecoding` (BitmapFactory) | Core `Data/` + app project |
+| **Application** | Use-case orchestration: wiring a session, advancing a pose, launching a screen | Mostly inside the Activities; resolving an id to a displayable image now sits inside the domain aggregate |
+| **Domain** | `DrawingSession<TImage>`, `SessionSetup`, `ReferenceLibrary`, `ViewerTools`, value objects | `FigureDrawing.Core` |
+| **Infrastructure** | `Settings` (LiteDB), `ContentResolverDocumentTree` (SAF), `ImageDecoding` (BitmapFactory) | Core `Data/` + app project |
 
 The domain layer has no outward dependency: `FigureDrawing.Core` references only LiteDB, and only
 from `Data/`. Verified structurally by `AndroidBuildTests` and by the project references.
 
 **The application layer is the blurry one, on purpose.** `SessionActivity.OnCreate` composes the
-object graph and `Advance` sequences two domain calls — both are application-layer work living in
-a presentation-layer class. At this size that is an accepted trade (§3: no ViewModel layer). The
+object graph and the repaint loop calls `Tick` — application-layer work living in a
+presentation-layer class. At this size that is an accepted trade (§3: no ViewModel layer). The
 threshold for extracting it is stated in §17: when the same multi-object sequence appears in two
-screens or two handlers, it moves to Core.
+screens or two handlers, it moves to Core. The consolidation moved one such sequence already —
+resolving an id to an image is no longer a separate service the screen wires up.
 
 ## 20. Where the code deviates today
 
 Live findings, ordered by how much they cost. None is a blocker; each has a stated trigger.
 
-1. **`MainActivity` spans three contexts** — Reference Library (SAF picking, enumeration, the
+1. **`MainActivity` spans three contexts** — Reference Library (SAF picking, the library, the
    thumbnail grid), Session Setup (inputs, preset chips, Start gate), Preferences (opening the
    database, loading and saving settings). The Claude Design import made this literal: the three
    contexts are now the three tabs of one screen. Not a god object at this size, but it is the only
    class in the codebase that touches three contexts, so it is where the next rule will be tempted
    to land. On the next feature that touches it, split by context: keep view wiring in the Activity
    and move folder-loading and settings-syncing into their own adapter classes.
-2. ~~The pose-restart rule lives in an Activity~~ — closed by `PoseSession` (§17).
-3. **`SettingsStore` has no port interface** and `AppSettings` carries a LiteDB attribute (§17).
+2. ~~The pose-restart rule lives in an Activity~~ — closed by the session aggregate (§17).
+3. ~~`SettingsStore` has no port interface~~ — closed by merging it into `Settings` (§17): there was
+   no second implementation to justify the seam. `Settings` still carries a LiteDB attribute, and
+   the trigger for splitting a domain type back out is stated there.
 4. **Session state is not persisted across process death** (§5) — from a DDD angle, the session
    aggregate has no identity and no repository, which is exactly why rotation restarts a pose. If
    FD-008's rotation handling requires survival, that is the point at which `DrawingSession` gains
    an id and a snapshot/restore pair, not a `static`.
+5. **The draft phase is generic for no reason of its own** (§17) — `DrawingSession<Bitmap>.Evaluate`
+   on a screen with no bitmaps. Harmless, and cheaper than keeping a type to avoid it, but it is the
+   one place the merged model reads worse than what it replaced.
+6. **Zoom carries across poses.** `ViewerTools.ResetZoom` exists and nothing calls it, so a 2.5×
+   zoom set for one pose is still applied to the next. `INV-VIEW-4` was written to match the code
+   rather than the other way round; wiring the reset into the phase change is a one-line UX decision
+   nobody has made.
+7. **Known Android-layer costs, all pre-dating the consolidation** — the pool crosses to the player
+   as an intent-extra array (a `TransactionTooLargeException` waits at roughly 2,000 images), image
+   decoding runs on the main thread inside the repaint loop, decoded bitmaps are never recycled, and
+   persisted folder grants are taken and never released. None is a Core concern and none is new; §7
+   already names background decoding as the first candidate for async work.
 
 ## 21. Testing the model, and what "done" looks like
 
@@ -567,10 +600,13 @@ goes:
 
 Success criteria for the DDD structure, checkable rather than aspirational:
 
-- [ ] `FigureDrawing.Core` has zero `Android.*` / `Java.*` references — guarded by project setup and `AndroidBuildTests`
-- [ ] Each Core type belongs to exactly one context in the §16 table; new types are added to it
+- [x] `FigureDrawing.Core` has zero `Android.*` / `Java.*` references — guarded by project setup and `AndroidBuildTests`
+- [x] Each Core type belongs to exactly one context in the §16 table; new types are added to it
+- [x] The catalogue stays at nine objects unless a new one earns its place — a new Core type must
+      justify itself against [DOMAIN-MODEL.md §9](DOMAIN-MODEL.md#9-consolidation), or be added to
+      the catalogue with its own invariants and tests
 - [ ] Context dependencies stay acyclic and match the §16 map — Execution never reads settings, Setup never reads the pool's contents
 - [ ] Every invariant in §17 has a named unit test
-- [ ] No aggregate mutates through a public field or a setter — commands only
+- [x] No aggregate mutates through a public field or a setter — commands only
 - [ ] No rule reachable only through an Activity (the §14 list, plus the §20 findings closed)
-- [ ] Any new time or randomness in Core arrives through an injected `Func<TimeSpan>` / `Random`
+- [x] Any new time or randomness in Core arrives through an injected `Func<TimeSpan>` / `Random`

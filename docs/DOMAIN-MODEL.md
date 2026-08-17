@@ -20,9 +20,15 @@ still needs:
 | **Implicit** | The rules are enforced, but by a primitive or by logic spread across types — no named type owns them |
 | **Proposed** | Not built. The rules are the design contract for the ticket that builds it |
 
-Invariants are numbered (`INV-<object>-<n>`) so a ticket, test name, or review comment can cite
+Invariants are numbered (`INV-<family>-<n>`) so a ticket, test name, or review comment can cite
 one. An invariant is a rule that must hold at every point an outside caller can observe the
 object — not merely on entry and exit of one method.
+
+**Invariant ids are stable across the consolidation.** The catalogue below merges objects that were
+once separate cards, but a merged object keeps every id family it absorbed rather than renumbering,
+so an existing citation in a ticket, test name, or review comment still resolves. One object owning
+several families (`DrawingSession` owns five) is therefore expected, not a modelling smell. Two
+families read alike and are not: `INV-SET-1..5` is the setup gate, `INV-SET-P*` is preferences.
 
 Object kinds use the standard meanings: **Entity** has identity and changes over time; **Value
 object** is immutable and compared by its contents; **Aggregate root** is the only legal entry
@@ -33,38 +39,41 @@ object; **Port** is an interface the domain defines and the platform implements.
 
 ## 1. Object catalogue
 
-| # | Object | Kind | Context | Status |
-|---|---|---|---|---|
-| 1 | `ReferenceImage` | Value object | Reference Library | Implicit (`string`) |
-| 2 | `ImageGroup` | Aggregate root | Reference Library | Implicit (one picked tree) |
-| 3 | `ImagePool` | Value object | Reference Library | Implicit (`IReadOnlyList<string>`) |
-| 4 | `IDocumentTree` / `DocumentEntry` | Port / value object | Reference Library | Implemented |
-| 5 | `FolderImageEnumerator` | Domain service | Reference Library | Implemented |
-| 6 | `SessionSetupState` | Value object | Session Setup | Implemented |
-| 7 | `SessionConfig` | Value object | Session Setup → Execution | Implemented |
-| 8 | `DrawingSession` | Aggregate root | Session Execution | Implemented |
-| 9 | `Pose` | Value object | Session Execution | Implicit |
-| 10 | `PoseCountdown` | Entity | Session Execution | Implemented |
-| 11 | `SessionPlayer<TImage>` | Application service | Session Execution | Implemented |
-| 12 | `SessionSummary` | Value object | Session Execution | Implemented |
-| 13 | `AppSettings` | Aggregate root | Preferences | Implemented |
-| 14 | `SettingsStore` | Repository | Preferences | Implemented |
-| 15 | `SessionRecord` | Entity | History | Proposed |
+Nine objects, down from fifteen. The count is the point: this is a single-user offline app, and a
+concept that never varies independently of its neighbour does not earn its own type.
+
+| # | Object | Kind | Context | Invariant families | Status |
+|---|---|---|---|---|---|
+| 1 | `Pose` | Value object | Reference Library → Session Execution | `INV-IMG-*`, `INV-POSE-*` | Implicit (`string` id + session state) |
+| 2 | `ReferenceLibrary` | Aggregate root | Reference Library | `INV-GRP-*`, `INV-POOL-*` | Implemented |
+| 3 | `IDocumentTree` / `DocumentEntry` | Port / value object | Reference Library | `INV-TREE-*` | Implemented |
+| 4 | `SessionSetup` | Domain service | Session Setup | `INV-SET-1..5` | Implemented |
+| 5 | `SessionConfig` | Value object | Session Setup → Execution | `INV-CFG-*` | Implemented |
+| 6 | `DrawingSession<TImage>` | Aggregate root | Session Execution | `INV-SES-*`, `INV-CD-*`, `INV-PLY-*`, `INV-SUM-*`, `INV-POSE-*` | Implemented |
+| 7 | `ViewerTools` | Entity (no identity) | Session Execution | `INV-VIEW-*` | Implemented |
+| 8 | `Settings` | Aggregate root | Preferences | `INV-SET-P*`, `INV-STO-*` | Implemented |
+| 9 | `SessionRecord` | Entity | History | — | Proposed |
+
+What was merged, and why, is [§9](#9-consolidation). Read a card first; the mapping is only needed
+when touching the code.
 
 ---
 
 ## 2. Reference Library objects
 
-### 2.1 `ReferenceImage` — *Implicit (`string`)*
+### 2.1 `Pose` — *Implicit*
 
-One picture the artist can draw from.
+One picture the artist draws from, shown once for the configured duration. Image and display are
+one object: a reference image the app never shows is not a domain concept, and a pose without an
+image cannot exist. Identity is the image id; the pose adds when it started, how it ended, and
+nothing else.
 
 | Aspect | Rule |
 |---|---|
-| **Identity** | The SAF content URI string. Two references are the same image if and only if the strings are equal — no normalization, no case folding, no path comparison |
+| **Identity** | The SAF content URI string. Two poses show the same image if and only if the strings are equal — no normalization, no case folding, no path comparison |
 | **Kind** | Value object. Immutable, compared by value |
-| **Lifetime** | Outlives the app. The app holds a reference, never the bytes |
-| **State** | The id, and nothing else. Dimensions, format, and orientation are decode-time facts, not domain state |
+| **Lifetime** | The id outlives the app; the pose lasts from the moment the image goes on screen until it is completed, skipped, or cut short |
+| **State** | The id, and nothing else. Dimensions, format, and orientation are decode-time facts; remaining time and outcome are the session's state, not the pose's |
 
 **Rules**
 
@@ -78,114 +87,132 @@ One picture the artist can draw from.
   with `image/` is a reference image. No hardcoded extension list. A directory is never an image.
 - `INV-IMG-4` — **Never cached as decoded pixels beyond the current screen.** A decoded image is a
   rendering artifact bounded by `MaxImageDimension` (1080 px), not a domain object.
+- `INV-POSE-1` — **A pose ends exactly once**, in exactly one of three ways: completed (timer
+  expiry or manual done-tap), skipped, or cut short by ending the session.
+- `INV-POSE-2` — **A new pose gets the full configured duration.** No carry-over from the previous
+  pose, ever.
+- `INV-POSE-3` — **The pose clock restarts whenever the current image changes.** Advancing the
+  image and restarting the clock are one operation, owned by `DrawingSession` — never a pairing a
+  screen is trusted to repeat.
+- `INV-POSE-4` — **Duration is uniform within a session.** Per-pose durations (long-pose warmups,
+  ramping timers) would make `SessionConfig` carry a schedule instead of a scalar — a model change,
+  not a parameter tweak.
 
 **May not** — carry a caption, rating, tag, or "seen" flag. If per-image state is ever needed, it
 becomes an entity with its own store, and that is a deliberate model change.
 
-### 2.2 `ImageGroup` — *Implicit (one picked tree)*
+### 2.2 `ReferenceLibrary` — *Implemented*
 
-A named set of reference images the user draws from — today, one picked folder and everything
-beneath it. The MVP has exactly one live group; the model is written so a second one costs a
-list, not a redesign.
+Everything between "the user picked a folder" and "here is the ordered list a session may draw
+from": the picked tree, the traversal that discovers images beneath it, and the resulting pool.
+One object, because the pool has no meaning apart from the tree that produced it and the traversal
+has no state to keep between them.
 
 | Aspect | Rule |
 |---|---|
-| **Identity** | The tree URI of the picked folder. Stable across launches; that is what makes restore possible |
+| **Identity** | `RootDocumentId` — the root document id of the picked tree. Stable across launches; the tree URI it came from is persisted separately, by the Android layer, in `Settings.LastCollection` |
 | **Kind** | Aggregate root over its images |
-| **Lifetime** | Persisted by reference (`AppSettings.LastCollection`), never by contents |
-| **State** | Root tree URI, display name, and the enumerated image ids with their encounter order |
+| **Lifetime** | Persisted by reference (`Settings.LastCollection`), never by contents |
+| **State** | Root document id, display name, and the enumerated image ids in encounter order |
+| **Operations** | `Enumerate()` (re-walk the tree), `Pool` (the ordered ids), `Count` / `IsEmpty`, `RootDocumentId` / `DisplayName`, the static `Empty` (no folder picked yet — every screen's starting state) and the static classifiers `IsImage` / `IsDirectory` |
 
-**Rules**
+**Mapping ids at the edge.** The constructor takes an optional `toImageId` so the adapter can turn
+each document id into the durable content URI a session draws from — the Android layer passes
+`DocumentsContract.BuildDocumentUriUsingTree`, tests pass nothing and keep using `"a"`, `"b"`,
+`"c"`. That is what makes `Pool` *the* session pool rather than a list the screen has to re-map.
 
-- `INV-GRP-1` — **Membership is derived, never stored.** The images in a group are whatever the
-  document tree reports *now*. The app never persists a list of image ids — a persisted list would
-  silently rot as the user edits the folder. Re-enumerate on load.
-- `INV-GRP-2` — **A group is flat.** Subfolders are traversed depth-first and their images merge
-  into the one group in encounter order. Nesting is a storage detail, not a domain hierarchy. If
-  per-subfolder grouping is ever wanted, that is *several* groups, decided at pick time.
+**No `IsAvailable`.** Whether a persisted read permission is still held is Android knowledge. A
+revoked grant needs no query of its own: the tree reports nothing, the library enumerates to empty,
+and the empty state shows (`INV-GRP-4`, `INV-GRP-5`).
+
+**Rules — the group**
+
+- `INV-GRP-1` — **Membership is derived, never stored.** The images are whatever the document tree
+  reports *now*. The app never persists a list of image ids — a persisted list would silently rot
+  as the user edits the folder. Re-enumerate on load.
+- `INV-GRP-2` — **The library is flat.** Subfolders are traversed depth-first and their images
+  merge into one pool in encounter order. Nesting is a storage detail, not a domain hierarchy. If
+  per-subfolder grouping is ever wanted, that is *several* libraries, decided at pick time.
 - `INV-GRP-3` — **Enumeration terminates.** A provider that reports a document as its own
   descendant must not loop; visited document ids are tracked.
-- `INV-GRP-4` — **A group may be empty, and empty is not an error.** Zero images shows the empty
-  state, blocks Start, and does not crash.
-- `INV-GRP-5` — **Access can expire.** A group is only usable while its persisted read permission
-  is still held. A revoked grant is an expected outcome: fall back to the empty state, log, and let
-  the user pick again. Never crash and never prompt in a loop.
-- `INV-GRP-6` — **Order is enumeration order.** The group's own order is deterministic and
-  provider-driven. Randomization belongs to the session, never to the group.
+- `INV-GRP-4` — **It may be empty, and empty is not an error.** Zero images shows the empty state,
+  blocks Start, and does not crash.
+- `INV-GRP-5` — **Access can expire.** The library is only usable while its persisted read
+  permission is still held. A revoked grant is an expected outcome: fall back to the empty state,
+  log, and let the user pick again. Never crash and never prompt in a loop.
+- `INV-GRP-6` — **Order is enumeration order.** The library's own order is deterministic and
+  provider-driven. Randomization belongs to the session, never here.
 
-**Operations** — `Enumerate()` (re-walk the tree), `IsAvailable` (permission still held).
-
-**May not** — copy, move, rename, or delete anything the user owns. The app is strictly read-only
-against user storage.
-
-**Multi-group, when it lands** *(Proposed)* — a session draws from a `Selection` of one or more
-groups. Rules that must hold then: the pool is the concatenation of each group's images in group
-order; duplicate ids across groups collapse to one entry (`INV-POOL-2`); removing a group from the
-selection never disturbs a session already running, because the pool was copied at construction
-(`INV-POOL-4`).
-
-### 2.3 `ImagePool` — *Implicit (`IReadOnlyList<string>`)*
-
-The ordered image ids one session may draw from. The hand-off object between Reference Library and
-Session Execution.
-
-**Rules**
+**Rules — the pool it hands over**
 
 - `INV-POOL-1` — **Ordered and stable.** Index order is fixed for the session's lifetime.
 - `INV-POOL-2` — **No duplicates.** The same id appears at most once. Repetition within a session
   comes from passes (`INV-SES-4`), never from a pool that lists an image twice.
 - `INV-POOL-3` — **May be smaller than the session's target count.** That is normal and is exactly
   what passes exist to handle.
-- `INV-POOL-4` — **Copied, not aliased.** A session copies the pool at construction; later edits to
-  the source list cannot change a running session.
+- `INV-POOL-4` — **Copied, not aliased.** A session copies the pool at construction; a later
+  re-enumeration cannot change a running session.
 - `INV-POOL-5` — **A pool with zero images cannot start a session.** Enforced upstream by the Start
   gate (`INV-SET-3`) and defensively downstream (`INV-SES-7`).
 
-### 2.4 `IDocumentTree` / `DocumentEntry` — *Implemented*
+**Traversal is stateless.** Classification (`IsImage`, `IsDirectory`) and the depth-first policy
+hold no state between calls, so two callers can never interfere — that property must survive the
+merge into the aggregate.
 
-The port through which the domain sees storage, and the one row type it understands.
+**May not** — copy, move, rename, or delete anything the user owns. The app is strictly read-only
+against user storage.
+
+**Multi-library, when it lands** *(Proposed)* — a session draws from a selection of one or more
+libraries. Rules that must hold then: the pool is the concatenation of each library's images in
+selection order; duplicate ids across libraries collapse to one entry (`INV-POOL-2`); removing one
+from the selection never disturbs a running session, because the pool was copied at construction
+(`INV-POOL-4`).
+
+### 2.3 `IDocumentTree` / `DocumentEntry` — *Implemented*
+
+The port through which the domain sees storage, and the one row type it understands. Kept separate
+from `ReferenceLibrary` on purpose: it is the anti-corruption layer, and an ACL that lives inside
+the aggregate it protects is not an ACL.
 
 **Rules**
 
 - `INV-TREE-1` — **The port is the only door.** `DocumentsContract`, `ContentResolver`, `Cursor`,
   and `Uri` stop at the adapter. Nothing SAF-shaped crosses into the domain.
-- `INV-TREE-2` — **`GetChildren` returns direct children only.** Recursion is the enumerator's job,
+- `INV-TREE-2` — **`GetChildren` returns direct children only.** Recursion is the library's job,
   not the adapter's, so the adapter stays trivial enough to leave untested.
 - `INV-TREE-3` — **A `DocumentEntry` is `(DocumentId, MimeType?)` and nothing more.** A null or
   unknown MIME type is legal and simply is not an image.
 - `INV-TREE-4` — **The adapter never throws through the port.** A failed query yields nothing.
 
-### 2.5 `FolderImageEnumerator` — *Implemented*
-
-Stateless domain service: walks a tree and answers "which of these are reference images". Owns
-`INV-IMG-3`, `INV-GRP-2`, and `INV-GRP-3`. Holds no state between calls, so two callers can never
-interfere.
-
 ---
 
 ## 3. Session Setup objects
 
-### 3.1 `SessionSetupState` — *Implemented*
+### 3.1 `SessionSetup` — *Implemented*
 
-The evaluated setup screen: parsed seconds, parsed count, and whether a group is loaded.
+Stateless domain service: parses the setup inputs, answers whether Start is allowed, and produces
+the config. The evaluated result it returns is a draft session (`DrawingSession` in its `Draft`
+phase, §4.1) rather than a separate state object.
 
 **Rules**
 
 - `INV-SET-1` — **Parsing is domain logic, not UI logic.** Blank, non-numeric, and non-positive
   input all evaluate to "absent". Surrounding whitespace is tolerated so a stray space cannot
   disable Start.
-- `INV-SET-2` — **Both inputs must be strictly positive.** Zero is not a session.
-- `INV-SET-3` — **Start requires all three:** a group with at least one image, a valid seconds
+- `INV-SET-2` — **Both inputs must be strictly positive.** Zero is not a session. The break is the
+  exception: zero is a legal break and means "no break".
+- `INV-SET-3` — **Start requires all three:** a library with at least one image, a valid seconds
   value, and a valid count. The screen binds the button's enabled state to this and decides nothing
   itself.
 - `INV-SET-4` — **Evaluation is pure and total.** Same inputs, same result; no input string throws.
-  It is called on every keystroke, so it must stay cheap.
+  It is called on every keystroke, so it must stay cheap — a draft session allocates its own fields
+  and nothing else: no pool copy, no clock started, no traversal.
 - `INV-SET-5` — **A config exists only when the setup is startable.** No partially valid config can
   be obtained.
 
 ### 3.2 `SessionConfig` — *Implemented*
 
-`(SecondsPerImage, ImageCount)` — the validated contract handed to a session.
+`(SecondsPerImage, ImageCount, BreakSeconds)` — the validated contract handed to a session.
 
 **Rules**
 
@@ -196,7 +223,7 @@ The evaluated setup screen: parsed seconds, parsed count, and whether a group is
 - `INV-CFG-3` — **It is the whole contract.** A new per-session input is a new field here and at
   both ends of the intent-extra boundary — never an out-of-band static or a settings read from
   inside the session.
-- `INV-CFG-4` — **Distinct from `AppSettings`.** Config is per-session and immutable; settings are
+- `INV-CFG-4` — **Distinct from `Settings`.** Config is per-session and immutable; settings are
   per-installation and mutable. Neither is derived from the other automatically: the setup screen
   copies values across explicitly, in both directions, at named moments (seed on launch, persist on
   Start).
@@ -205,22 +232,41 @@ The evaluated setup screen: parsed seconds, parsed count, and whether a group is
 
 ## 4. Session Execution objects
 
-### 4.1 `DrawingSession` — *Implemented*
+### 4.1 `DrawingSession<TImage>` — *Implemented*
 
-**Aggregate root.** One run of N poses under one config. Everything about progress, ordering, and
-time accounting is behind it.
+**Aggregate root.** One run of N poses under one config, from the moment the setup inputs are first
+evaluated to the summary the artist reads at the end. It owns the sequence, the counts, the pose
+clock, the break, the resolution of an image id into something displayable, and the totals. There
+is exactly one live session per player screen, and it is the only object that screen commands.
+
+The reason it is one object and not five: every one of those pieces changes only when the session
+advances, and each of the old separate types existed to serve exactly one other — a countdown with
+no session to time, a player with no session to advance, and a summary that is a projection of
+fields the session already holds, are not independent concepts. They were six types
+(`SessionSetupState`, `DrawingSession`, `SessionPlayer<TImage>`, `PoseCountdown`,
+`PoseSession<TImage>`, `SessionSummary`); see [§9](#9-consolidation).
 
 | Aspect | Rule |
 |---|---|
-| **Identity** | None. A session is positional — one live session per player screen — so it is never stored, compared, or resumed. Giving it an id is a deliberate model change (see §7) |
-| **Lifetime** | Constructed already positioned on its first image; ends at completion or `End()`. Never restarted — construct a new one |
-| **State** | Upcoming queue for the current pass, current image, completed count, accumulated drawing time, complete flag |
-| **Commands** | `Next()`, `Skip()`, `End()` |
-| **Queries** | `CurrentImage`, `CompletedCount`, `Remaining`, `IsComplete`, `Summary`, `TargetCount`, `SecondsPerImage` |
+| **Identity** | None. A session is positional — one live session per player screen — so it is never stored, compared, or resumed. Giving it an id is a deliberate model change (see §6) |
+| **Lifetime** | A draft is evaluated on the setup screen; constructing one with a pool copies it and positions the session on its first displayable image; it ends at completion or `End()`. Never restarted — construct a new one |
+| **Phases** | `Draft` → `Pose` ⇄ `Break` → `Complete` |
+| **State** | Parsed setup inputs; the upcoming queue for the current pass; current image id and its loaded image; completed and skipped counts; accumulated drawing time; time left on the current phase; run/pause state |
+| **Commands** | `Next()`, `Skip()`, `End()`, `Tick()`, `Pause()`, `Resume()` |
+| **Queries** | Every phase: `Phase`, `SecondsPerImage`, `ImageCount`, `BreakSeconds`, `FolderSelected`, `Config`. Draft: `SecondsValid`, `CountValid`, `CanStart`, `EstimateSeconds`. Running: `CurrentImage`, `CurrentImageId`, `Display`, `TimeRemaining`, `SecondsRemaining`, `IsExpired`, `PhaseDuration`, `RemainingPercent`, `OnBreak`, `IsPaused`, `IsRunning`, `CompletedCount`, `SkippedCount`, `TargetCount`, `Remaining`, `CurrentPoseNumber`, `IsComplete`, `CouldNotDisplayImage`, `ImagesDisplayed`, `TotalDrawingTime`, `AveragePoseTime` |
+| **Statics** | `Evaluate(...)` (the draft factory) and, on the non-generic partner type, `DrawingSession.Format(seconds)` |
 
-**Rules**
+`Remaining` counts *images* left, `TimeRemaining` counts the current phase's *time* — two different
+scarcities, deliberately not sharing a name.
 
-- `INV-SES-1` — **Commands only.** All mutation goes through the three commands. No public setter,
+**One object, two read surfaces.** A draft answers the clock queries with a stopped, zero-length
+phase, and a running session keeps answering `Config` with the config it runs under. Only `CanStart`
+is gated on the phase: a session that has already started, or finished, cannot start (`INV-CFG-1`).
+Reading a run query off a draft is legal and meaningless — the phase says which half is live.
+
+**Rules — the run**
+
+- `INV-SES-1` — **Commands only.** All mutation goes through the commands above. No public setter,
   no writable field, no way to nudge the count or the clock from outside.
 - `INV-SES-2` — **Counting is exact.** `CompletedCount` never exceeds `TargetCount`; `Remaining` is
   never negative.
@@ -239,52 +285,17 @@ time accounting is behind it.
 - `INV-SES-8` — **Time is monotonic and injected.** A `Func<TimeSpan>` clock, defaulting to a
   `Stopwatch`. Never `DateTime.Now`; never time derived from counting UI ticks. Wall-clock changes
   and dropped repaints must not alter how much time a pose gets or how much time is banked.
-- `INV-SES-9` — **`CurrentImage` is null if and only if the session is complete.** The screen may
-  rely on that biconditional.
+- `INV-SES-9` — **`CurrentImage` is null if and only if the session is complete.** During a break it
+  is *already the next pose's image*, loaded under the overlay — the screen covers it rather than
+  blanking it, and may rely on both halves of that.
+- `INV-SES-10` — **A break never counts a pose, and never follows the last one.** The target is
+  checked before entering `Break`, so a session ends on a pose, never on a rest.
+- `INV-SES-11` — **A skip lands on the next pose, never on a break.** Skipping is the artist
+  rejecting an image, not asking for a rest.
+- `INV-SES-12` — **Drawing time excludes break, background, and paused time.** The session clock
+  stops for the whole break and for the whole pause.
 
-**State machine**
-
-```
- construct ──▶ [Running] ──Next (count < target)──▶ [Running]
-                  │  │
-                  │  └──Skip──▶ [Running]            (no count, no time banked)
-                  │
-                  ├──Next (count reaches target)──▶ [Complete]  (normal completion)
-                  ├──End──────────────────────────▶ [Complete]  (early end, partial time banked)
-                  └──empty pool / count <= 0──────▶ [Complete]  (at construction)
-
- [Complete] ──any command──▶ [Complete]              (no-op, INV-SES-6)
-```
-
-**May not** — decode an image, know what a `Bitmap` is, read settings, write to storage, start a
-thread, or format anything for display.
-
-### 4.2 `Pose` — *Implicit*
-
-One display of one image for the configured duration. It is the unit the user experiences and the
-unit the summary counts, but no type carries it: the "current pose" is spread across the session's
-current image and the countdown's remaining time.
-
-**Rules the concept must obey wherever it is enforced**
-
-- `INV-POSE-1` — **A pose ends exactly once**, in exactly one of three ways: completed (timer
-  expiry or manual done-tap), skipped, or cut short by ending the session.
-- `INV-POSE-2` — **A new pose gets the full configured duration.** No carry-over from the previous
-  pose, ever.
-- `INV-POSE-3` — **The pose clock restarts whenever the current image changes.** Today this is
-  enforced by `SessionActivity.Advance` pairing `player.Next()` with `countdown.Restart()` — a
-  domain rule held by a screen, and the model's one known gap. Skip (FD-006) will need the same
-  pair, which is the trigger to move both into Core.
-- `INV-POSE-4` — **Duration is uniform within a session.** Per-pose durations (long-pose warmups,
-  ramping timers) would make `SessionConfig` carry a schedule instead of a scalar — a model change,
-  not a parameter tweak.
-
-### 4.3 `PoseCountdown` — *Implemented*
-
-Entity owning how much time is left on the current pose, whether it is draining, and how it reads
-on screen.
-
-**Rules**
+**Rules — the pose clock**
 
 - `INV-CD-1` — **Remaining is computed from the clock, never decremented by ticks.** Remaining is
   `duration − time actually spent running`. A slow, dropped, or bursty repaint cannot make a pose
@@ -296,25 +307,12 @@ on screen.
 - `INV-CD-4` — **Remaining is never negative**, and expiry is `Remaining <= 0`.
 - `INV-CD-5` — **Display rounds up.** A fresh 30 s pose reads `30` immediately and reads `0` only
   once it has actually expired. Format is `m:ss`, or `h:mm:ss` past an hour.
-- `INV-CD-6` — **`Restart` always resumes running** and clears all banked time.
-- `INV-CD-7` — **It renders text, not views.** The countdown produces a string; the screen owns the
+- `INV-CD-6` — **Advancing always restarts the clock running**, with all banked time cleared and
+  the full configured duration (`INV-POSE-2`, `INV-POSE-3`).
+- `INV-CD-7` — **It renders text, not views.** The session produces a string; the screen owns the
   repaint loop and the `TextView`.
 
-**State machine**
-
-```
- construct ──▶ [Running] ──Pause──▶ [Paused] ──Resume──▶ [Running]
-                   │                    │
-                   └──time runs out──▶ [Expired] ◀──Resume (no-op)──┘
- [any] ──Restart──▶ [Running]   (banked time cleared, full duration)
-```
-
-### 4.4 `SessionPlayer<TImage>` — *Implemented*
-
-Application service between the session and the screen: turns the session's current image id into
-something displayable and owns the unreadable-image policy.
-
-**Rules**
+**Rules — resolving an id to an image**
 
 - `INV-PLY-1` — **Loading is injected.** A `Func<string, TImage?>` returning null for "cannot
   read". The generic parameter is what keeps `Bitmap` out of the domain.
@@ -326,35 +324,79 @@ something displayable and owns the unreadable-image policy.
   smaller than the target count repeats forever by design.
 - `INV-PLY-4` — **"Could not display" is distinguishable from normal completion**, so the screen
   can show an error instead of a summary.
-- `INV-PLY-5` — **The loader never throws through the player.** Decode failures are caught at the
+- `INV-PLY-5` — **The loader never throws through the session.** Decode failures are caught at the
   adapter and returned as null.
 - `INV-PLY-6` — **Resolution is synchronous and re-entrant-safe.** It runs to a decision — a
   displayable image, completion, or the failure budget — before returning.
 
-### 4.5 `SessionSummary` — *Implemented*
+**Rules — the totals**
 
-Immutable projection: `(ImagesDisplayed, TotalDrawingTime)`.
-
-**Rules**
-
-- `INV-SUM-1` — **A snapshot, not a live view.** Reading it never mutates anything.
+- `INV-SUM-1` — **The totals are a snapshot, not a live view.** Reading them never mutates
+  anything.
 - `INV-SUM-2` — **`ImagesDisplayed` is the completed count**, so skipped images are absent from it
-  by definition.
+  by definition and are reported separately as `SkippedCount`.
 - `INV-SUM-3` — **`TotalDrawingTime` is banked time only** — completed poses, plus the final
   partial pose when the session was ended early. It is not wall-clock session length, and the
   difference is the point.
-- `INV-SUM-4` — **It is readable before completion** and simply reflects progress so far.
+- `INV-SUM-4` — **They are readable in every phase** and simply reflect progress so far.
+
+**State machine**
+
+```
+ evaluate ──▶ [Draft] ──construct with pool──▶ [Pose]
+                  │                           │  │
+                  │                           │  └──Skip──▶ [Pose]   (no count, no time banked)
+                  │                           │
+                  │        Next (count < target, break > 0) ──▶ [Break] ──Tick expiry──▶ [Pose]
+                  │                           │
+                  │                           ├──Next (count reaches target)──▶ [Complete]
+                  │                           ├──End────────────────────────────▶ [Complete]  (partial time banked)
+                  │                           └──failure budget exhausted───────▶ [Complete]  (CouldNotDisplayImage)
+                  │
+                  └──constructed with an empty pool / count <= 0──▶ [Complete]
+
+ [Pose] ──Pause──▶ clock frozen ──Resume──▶ [Pose]        (INV-CD-2, INV-SES-12)
+ [Complete] ──any command──▶ [Complete]                   (no-op, INV-SES-6)
+```
+
+**May not** — decode an image, know what a `Bitmap` is, read settings, write to storage, start a
+thread, or format anything for display beyond the countdown string.
+
+### 4.2 `ViewerTools` — *Implemented*
+
+Entity owning how the pose is *presented*: grayscale, flip, grid, blur, and the zoom range. Kept
+out of `DrawingSession` deliberately — nothing it holds affects what the session counts or how long
+a pose lasts, and it survives independently of any pose.
+
+**Rules**
+
+- `INV-VIEW-1` — **A viewing aid never touches the count or the clock.** Toggling grayscale
+  mid-pose changes pixels, nothing else.
+- `INV-VIEW-2` — **Zoom is clamped to `[MinZoom, MaxZoom]`** and `CanZoomIn` / `CanZoomOut` are
+  true only when a step would actually move it.
+- `INV-VIEW-3` — **Toggles are pure flags.** The entity holds no bitmap, no matrix, and no view;
+  the screen reads the flags and renders.
+- `INV-VIEW-4` — **Every aid persists across poses within a session**, zoom included: nothing is
+  reset when the image changes. `ResetZoom` exists for a screen that wants a per-pose reset, and the
+  player does not call it — see [ARCHITECTURE.md §20](ARCHITECTURE.md#20-where-the-code-deviates-today)
+  before changing that, because it is a behaviour decision, not an omission.
 
 ---
 
 ## 5. Preferences objects
 
-### 5.1 `AppSettings` — *Implemented*
+### 5.1 `Settings` — *Implemented*
 
-The persisted preferences document: pose duration, session image count, shuffle, grayscale, last
-group.
+The persisted preferences — pose duration, session image count, break, shuffle, grayscale, keep
+awake, chime, last library — together with the single-document store that reads and writes them.
+One object: the document has exactly one store and the store has exactly one document, so the split
+bought a second name and no second implementation.
 
-**Rules**
+`Settings.Open(path)` reads the document, creating a defaulted one on first run; `Save()` upserts
+it; `Dispose()` closes the database. Saving through a disposed instance throws rather than silently
+dropping the write — losing preferences quietly is worse than failing loudly.
+
+**Rules — the document**
 
 - `INV-SET-P1` — **Exactly one document, forever.** Fixed identity (`Id == 1`) in one collection.
   A second document or collection needs a stated reason.
@@ -363,24 +405,23 @@ group.
 - `INV-SET-P3` — **Settings seed, they do not control.** Values are copied into the setup screen on
   launch and into intent extras on Start. Neither a session nor the setup logic reads settings at
   runtime.
-- `INV-SET-P4` — **Written at named moments only** — folder picked, Start pressed. Never on every
-  keystroke, and never from a background thread.
-- `INV-SET-P5` — **`LastCollection` holds a group reference, not its contents** (`INV-GRP-1`), and
-  a stale one is expected (`INV-GRP-5`).
+- `INV-SET-P4` — **Written at named moments only** — a folder was picked, Start was pressed, a
+  settings toggle was flipped, a break preset was tapped. Never on a keystroke, and never from a
+  background thread.
+- `INV-SET-P5` — **`LastCollection` holds a library reference, not its contents** (`INV-GRP-1`),
+  and a stale one is expected (`INV-GRP-5`).
 - `INV-SET-P6` — **Losing it is survivable.** A deleted or corrupt database costs preferences and
   nothing else; the app must start with defaults.
 
-### 5.2 `SettingsStore` — *Implemented*
-
-The repository for that single document: read-with-create-on-first-run, upsert, dispose.
-
-**Rules**
+**Rules — the store**
 
 - `INV-STO-1` — **Sole owner of the database.** No other type opens a `LiteDatabase`.
-- `INV-STO-2` — **Owns the document identity.** Callers never set `Id`; the store stamps it.
+- `INV-STO-2` — **It owns the document identity.** Callers never set `Id`; it is stamped on write.
 - `INV-STO-3` — **Disposed with the screen that opened it.**
-- `INV-STO-4` — **Storage vocabulary stops here.** Nothing above the store speaks BSON, collections,
-  or LiteDB types.
+- `INV-STO-4` — **Storage vocabulary stops here.** Nothing above it speaks BSON, collections, or
+  LiteDB types. Merging the document and the store does *not* license spreading BSON attributes
+  further: if `Settings` ever grows domain behaviour, split it into a domain type and a persisted
+  DTO rather than decorating the model.
 
 ---
 
@@ -395,8 +436,8 @@ ad hoc.
 
 - Identity is a generated id assigned at completion; a session in progress has none.
 - Immutable once written — a finished session is a fact, never edited.
-- Stores the summary, the config used, the group reference, and a completion timestamp. Never the
-  image ids: the group may have changed, and reconstructing an old sequence would be a lie.
+- Stores the totals, the config used, the library reference, and a completion timestamp. Never the
+  image ids: the library may have changed, and reconstructing an old sequence would be a lie.
 - Timestamps enter from outside the domain, through the injected clock, exactly like every other
   time value.
 - Its arrival is also the trigger for materializing domain events
@@ -412,19 +453,20 @@ These bind the objects together and are the ones most easily broken by a plausib
 **Reference and ownership**
 
 - `INV-X-1` — Reference Library never references Session Execution. The pool flows one way.
-- `INV-X-2` — Session Execution never reads `AppSettings`. Every per-session value arrives through
+- `INV-X-2` — Session Execution never reads `Settings`. Every per-session value arrives through
   `SessionConfig` or an explicit constructor argument.
 - `INV-X-3` — No object holds another across a screen boundary. Screen-to-screen hand-off is intent
   extras carrying primitives, never a static, singleton, or `Application` field.
-- `INV-X-4` — Nothing in the domain holds an Android object, a view, or a decoded bitmap.
+- `INV-X-4` — Nothing in the domain holds an Android object, a view, or a decoded bitmap. The
+  session holds `TImage`, which is a type parameter, not a type.
 
 **Identity and equality**
 
-- `INV-X-5` — Value objects (`SessionConfig`, `SessionSummary`, `DocumentEntry`,
-  `SessionSetupState`) are compared by value and never mutated after construction.
-- `INV-X-6` — Entities with identity — `ImageGroup` (tree URI), `AppSettings` (fixed id) — are
-  compared by that identity. `DrawingSession` and `PoseCountdown` have no identity and must never
-  be put in a set, dictionary key, or equality check.
+- `INV-X-5` — Value objects (`SessionConfig`, `DocumentEntry`, the pose id) are compared by value
+  and never mutated after construction.
+- `INV-X-6` — Entities with identity — `ReferenceLibrary` (root document id), `Settings` (fixed id)
+  — are compared by that identity. `DrawingSession` and `ViewerTools` have no identity and must never be
+  put in a set, dictionary key, or equality check.
 
 **Time and randomness**
 
@@ -442,23 +484,101 @@ These bind the objects together and are the ones most easily broken by a plausib
 - `INV-X-11` — Every failure the platform can produce — revoked permission, missing provider,
   decode error — has a defined domain outcome. "Throws" is not a defined outcome.
 
+**Consolidation**
+
+- `INV-X-12` — Merging objects never merges responsibilities. A rule that was enforced in one place
+  before is enforced in one place after; a bigger aggregate is not licence for a screen to reach in,
+  for a query to mutate, or for two concerns to become interdependent inside it. The measure is
+  still §8: one invariant, one enforcement point, one test.
+
 ---
 
 ## 8. Enforcement
 
 Each invariant above is enforced in exactly one place, and tested at the cheapest tier that can
-reach it ([ARCHITECTURE.md §11](ARCHITECTURE.md#11-testing-strategy)):
+reach it ([ARCHITECTURE.md §11](ARCHITECTURE.md#11-testing-strategy)). An object with several
+invariant families has one test file per family rather than one per type.
 
 | Invariant family | Enforced in | Tested by |
 |---|---|---|
-| `INV-IMG-*`, `INV-GRP-*`, `INV-TREE-*` | `FolderImageEnumerator`, the SAF adapter | `FolderImageEnumeratorTests` with an in-memory tree |
-| `INV-SET-*`, `INV-CFG-*` | `SessionSetup`, `SessionSetupState` | `SessionSetupTests` |
-| `INV-SES-*`, `INV-SUM-*` | `DrawingSession` | `DrawingSessionTests`, `DrawingSessionE2ETests` |
-| `INV-CD-*` | `PoseCountdown` | `PoseCountdownTests`, `CountdownSessionE2ETests` |
-| `INV-PLY-*` | `SessionPlayer<TImage>` | `SessionPlayerTests` with a fake loader |
-| `INV-POSE-*` | Split — `PoseCountdown` and `SessionActivity` (see `INV-POSE-3`) | Partly untestable today; that is the gap |
-| `INV-SET-P*`, `INV-STO-*` | `AppSettings`, `SettingsStore` | `SettingsStoreTests` |
-| `INV-X-*` | Structural | Project references, `AndroidBuildTests`, code review |
+| `INV-IMG-*`, `INV-GRP-*`, `INV-POOL-*`, `INV-TREE-*` | `ReferenceLibrary` + the SAF adapter | `ReferenceLibraryTests` with an in-memory tree |
+| `INV-SET-1..5`, `INV-CFG-*` | `SessionSetup`, `DrawingSession<TImage>.Evaluate` | `SessionSetupTests`, `DrawingSessionSetupTests` |
+| `INV-SES-1..9`, `INV-SUM-*` | `DrawingSession<TImage>` | `DrawingSessionTests` |
+| `INV-SES-10..12`, `INV-POSE-*` | `DrawingSession<TImage>` | `DrawingSessionBreakTests`, `DrawingSessionTimeAccountingTests` |
+| `INV-CD-*` | `DrawingSession<TImage>` | `DrawingSessionCountdownTests` |
+| `INV-PLY-*` | `DrawingSession<TImage>` | `DrawingSessionImageTests` with a fake loader |
+| `INV-VIEW-*` | `ViewerTools` | `ViewerToolsTests` |
+| `INV-SET-P*`, `INV-STO-*` | `Settings` | `SettingsTests` |
+| Cross-context flows | The objects together | `SessionE2ETests` |
+| `INV-X-*` | Structural | Project references, `AndroidBuildTests`, `SessionScreenContractTests`, code review |
 
 Adding an invariant means adding a named test. Removing one means saying so in a ticket — an
 invariant deleted quietly is how a domain model stops describing the code.
+
+---
+
+## 9. Consolidation
+
+The catalogue was fifteen objects for an app of roughly 1,200 lines. Four merges took it to nine.
+This section is the map from the old names to the new, and the state of the code against it.
+
+| Merged object | Absorbed | Why they are one concept |
+|---|---|---|
+| `Pose` | `ReferenceImage`, `Pose` | An image the app never shows has no domain meaning, and a pose is always a pose *of* an image. They shared an identity already — the id |
+| `ReferenceLibrary` | `ImageGroup`, `ImagePool`, `FolderImageEnumerator` | The pool is the group's contents and the enumerator is how it computes them. Two of the three held no state; one had no independent lifetime |
+| `DrawingSession<TImage>` | `SessionSetupState`, `DrawingSession`, `SessionPlayer<TImage>`, `PoseCountdown`, `SessionSummary` | Every piece changes only when the session advances. The setup state is the session before it starts; the summary is a projection of counters it already holds; the player and the countdown each existed to serve exactly one session and nothing else |
+| `Settings` | `AppSettings`, `SettingsStore` | One document, one store, one collection, forever. The split bought a name, not a seam — the port that would justify it (`ISettingsRepository`) does not exist |
+
+The session merge absorbed **six** types, not five: `SessionSetupState`, `DrawingSession`,
+`SessionPlayer<TImage>`, `PoseCountdown`, `PoseSession<TImage>` and `SessionSummary`.
+
+**What did not merge, and why**
+
+- `IDocumentTree` / `DocumentEntry` — the anti-corruption layer. Folding a port into the aggregate
+  it protects removes the seam that keeps SAF out of Core (`INV-TREE-1`).
+- `SessionSetup` / `SessionConfig` — the published contract between two contexts. Config is the one
+  object that crosses the intent-extra boundary, and it must stay small enough to serialize as
+  primitives (`INV-CFG-3`).
+- `ViewerTools` — presentation state with its own lifetime, touching nothing the session counts
+  (`INV-VIEW-1`). Merging it would put "is the grid on" inside the object that owns the clock.
+
+**Code status: done.** The Core types match the model. The merge itself moved code rather than
+rewriting behaviour, but the model did not come through unchanged — §8 requires any added, changed
+or removed rule to be stated, so here they are:
+
+| Rule | Change | Why |
+|---|---|---|
+| `INV-VIEW-1..4` | **Added** | `ViewerTools` is a real Core type that the fifteen-object catalogue never listed. The rules describe what it already did |
+| `INV-SES-10`, `INV-SES-11`, `INV-SES-12` | **Added** | The break's rules were enforced by `PoseSession` and written down nowhere |
+| `INV-POOL-2` | **Newly enforced** | The library de-duplicates ids as it walks. The old static enumerator asserted this and did not do it |
+| `INV-CD-6` | **Rewritten** | Was "`Restart` always resumes running", naming a public command that no longer exists; now "advancing always restarts the clock", which is the same rule at the surface that survived |
+| `INV-POSE-3` | **Moved** | Was enforced by `SessionActivity.Advance`, then by `PoseSession`, now by the session aggregate. The rule never changed; its home did, twice |
+| `INV-SET-2` | **Clarified** | It never accounted for `BreakSeconds = 0` being legal, which it always was |
+| `INV-SES-9` | **Corrected** | It claimed `CurrentImage` is null during a break. It never was — the next pose's image is loaded under the overlay |
+| `INV-VIEW-4` | **Weakened to match the code** | It claimed zoom resets per pose. Nothing has ever called `ResetZoom` |
+| `INV-SET-P4` | **Corrected** | Two write moments were listed; there have always been four |
+
+One behaviour did change, deliberately: when the consecutive-failure budget is exhausted the session
+now banks **no** partial time for the unreadable image it died on. The old `SessionPlayer` routed
+that path through `End()`, which banked it — time spent failing to decode, counted as drawing time,
+against `INV-PLY-2`.
+
+| Merged object | Was | Is |
+|---|---|---|
+| `Pose` | `string` ids + session fields | Unchanged: still implicit. It gets a type when a second string-shaped concept enters the same signatures (the `ImageRef` candidate, [ARCHITECTURE.md §17](ARCHITECTURE.md#17-tactical-model)) |
+| `ReferenceLibrary` | `FolderImageEnumerator` (static) + the tree URI and a `List<string>` held loose in `MainActivity` | `ReferenceLibrary.cs`, holding root id, display name and pool, with `IDocumentTree` / `DocumentEntry` alongside it |
+| `DrawingSession<TImage>` | `PoseSession<TImage>` composing `DrawingSession` + `SessionPlayer<TImage>` + `PoseCountdown`, with `SessionSummary` as a projection | `Session/DrawingSession.cs`: one aggregate, the other four as private state and queries, plus the non-generic `DrawingSession.Format` |
+| `Settings` | `AppSettings` + `SettingsStore : IDisposable` | `Data/Settings.cs`: one type with `Open` / `Save` / `Dispose` |
+
+Three consequences worth knowing before the next change:
+
+- **The draft is a session, so `Evaluate` is generic.** `MainActivity` calls
+  `DrawingSession<Bitmap>.Evaluate(...)` for a screen that never touches an image. That reads oddly
+  and is the accepted price of deleting `SessionSetupState`; the alternative is that record under a
+  new name.
+- **`INV-POOL-2` is now enforced, not just asserted.** The library de-duplicates ids as it walks, so
+  a provider that reports one document under two parents yields one pool entry. The old static
+  enumerator would have listed it twice.
+- **`Settings` collides with `Android.Provider.Settings`.** `MainActivity` carries a
+  `using Settings = FigureDrawing.Data.Settings;` alias. Any new Android file that touches
+  preferences needs the same alias or a qualified name.
