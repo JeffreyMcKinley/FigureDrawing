@@ -69,6 +69,27 @@
         <item name="android:stateListAnimator">@null</item>
     </style>
 
+    <!--
+      A tool chip in the player rail. These share a row inside a fixed-width column when the rail is
+      beside the pose (fold open), where a chip gets a fraction of rail_width rather than as much
+      room as its label wants - which is how the labels came to wrap mid-word ("Grayscal / e") on a
+      Galaxy Z Fold7. Each chip takes a 0dp/weight share of the row, with tighter side padding, one
+      line of text, and a fixed height so the row is a row of equal pills whatever the labels are.
+
+      The share is a weight, so a long label is given a wider chip by raising its weight at the call
+      site (see activity_session.xml) rather than by shrinking its text. Autosizing the text was
+      tried instead and is not usable here: a chip that actually autosizes measures short (28dp
+      against the 36dp of its neighbours), so the row comes out ragged.
+    -->
+    <style name="Chip.Tool" parent="Chip">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">@dimen/chip_min_height</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:paddingLeft">@dimen/space_2</item>
+        <item name="android:paddingRight">@dimen/space_2</item>
+        <item name="android:maxLines">1</item>
+    </style>
+
     <!-- .btn.btn-primary -->
     <style name="PrimaryButton">
         <item name="android:layout_width">match_parent</item>

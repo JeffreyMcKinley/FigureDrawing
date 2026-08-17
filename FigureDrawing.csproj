@@ -36,6 +36,9 @@
   <ItemGroup>
     <ProjectReference Include="FigureDrawing.Core\FigureDrawing.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="docs\BugScreenshots\" />
+  </ItemGroup>
 
   <!--
     One-command run: `dotnet build FigureDrawing.csproj -t:RunEmulator` boots the
@@ -47,11 +50,7 @@
     <PropertyGroup>
       <_RunTargetArg Condition="'$(RunTarget)' != ''">-Target $(RunTarget)</_RunTargetArg>
     </PropertyGroup>
-    <Exec Condition="'$(OS)' == 'Windows_NT'"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;scripts\run-app.ps1&quot; $(_RunTargetArg)" />
-    <Exec Condition="'$(OS)' != 'Windows_NT'"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          Command="bash scripts/run-app.sh $(RunTarget)" />
+    <Exec Condition="'$(OS)' == 'Windows_NT'" WorkingDirectory="$(MSBuildProjectDirectory)" Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;scripts\run-app.ps1&quot; $(_RunTargetArg)" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'" WorkingDirectory="$(MSBuildProjectDirectory)" Command="bash scripts/run-app.sh $(RunTarget)" />
   </Target>
 </Project>

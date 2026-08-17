@@ -15,8 +15,12 @@
     <dimen name="tab_min_height">52dp</dimen>
 
     <dimen name="ring_size">46dp</dimen>
-    <!-- The player rail when it sits beside the pose on a wide screen (fold open). -->
-    <dimen name="rail_width">288dp</dimen>
+    <!--
+      The player rail when it sits beside the pose on a wide screen (fold open). Wide enough that
+      the four tool chips in one row keep their labels at full size; below ~300dp they start
+      autosizing down (see Chip.Tool).
+    -->
+    <dimen name="rail_width">328dp</dimen>
     <dimen name="pip_size">10dp</dimen>
     <dimen name="pip_gap">3dp</dimen>
 

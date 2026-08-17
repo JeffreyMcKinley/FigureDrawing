@@ -10,6 +10,7 @@
 *.userosscache
 *.sln.docstates
 docs/tickets
+docs/BugScreenshots
 
 # Appium E2E runner artifacts (scripts/run-appium-tests.ps1)
 appium-server.log

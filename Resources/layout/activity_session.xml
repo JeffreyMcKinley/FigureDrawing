@@ -213,17 +213,22 @@
                     android:text="@string/session_pause_text" />
             </LinearLayout>
 
-            <!-- Viewing aids. Two rows rather than one wrapping row so nothing falls off a phone. -->
+            <!--
+              Viewing aids. Two rows rather than one wrapping row so nothing falls off a phone.
+              "Grayscale" is more than twice as long as the other three labels, so it is given a
+              proportionally wider share of the row (weight 1.6) - with four equal shares it is the
+              one that runs out of room in the rail's fixed-width column and wraps.
+            -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/space_4"
                 android:orientation="horizontal">
 
-                <Button android:id="@+id/chip_grayscale" style="@style/Chip" android:layout_weight="1" android:text="@string/tool_grayscale_text" />
-                <Button android:id="@+id/chip_flip" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_flip_text" />
-                <Button android:id="@+id/chip_grid" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_grid_text" />
-                <Button android:id="@+id/chip_blur" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_blur_text" />
+                <Button android:id="@+id/chip_grayscale" style="@style/Chip.Tool" android:layout_weight="1.6" android:text="@string/tool_grayscale_text" />
+                <Button android:id="@+id/chip_flip" style="@style/Chip.Tool" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_flip_text" />
+                <Button android:id="@+id/chip_grid" style="@style/Chip.Tool" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_grid_text" />
+                <Button android:id="@+id/chip_blur" style="@style/Chip.Tool" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_blur_text" />
             </LinearLayout>
 
             <LinearLayout
@@ -232,8 +237,8 @@
                 android:layout_marginTop="@dimen/space_2"
                 android:orientation="horizontal">
 
-                <Button android:id="@+id/chip_zoom_out" style="@style/Chip" android:layout_weight="1" android:text="@string/tool_zoom_out_text" />
-                <Button android:id="@+id/chip_zoom_in" style="@style/Chip" android:layout_weight="1" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_zoom_in_text" />
+                <Button android:id="@+id/chip_zoom_out" style="@style/Chip.Tool" android:text="@string/tool_zoom_out_text" />
+                <Button android:id="@+id/chip_zoom_in" style="@style/Chip.Tool" android:layout_marginLeft="@dimen/space_2" android:text="@string/tool_zoom_in_text" />
             </LinearLayout>
 
             <LinearLayout

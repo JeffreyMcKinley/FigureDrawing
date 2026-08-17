@@ -13,6 +13,12 @@
 
   Prereqs (see repo memory): JDK 17 + Android SDK. Override paths with the params below or the
   matching environment variables.
+
+  Two AVDs are in play. FigureDrawing_Pixel (phone) is the default. FigureDrawing_Fold is a
+  "7.6in Foldable" (1768x2208 @420dpi = 673dp wide unfolded), which is the geometry the Galaxy Z
+  Fold7 rail bug showed up on: the player rail becomes a fixed-width column beside the pose there
+  without any rotation. Run it with -Avd FigureDrawing_Fold; -CreateAvd creates whichever AVD was
+  named if it does not exist yet.
 #>
 [CmdletBinding()]
 param(
@@ -21,6 +27,14 @@ param(
     [string]$Avd = "FigureDrawing_Pixel",
     [string]$AppiumUrl = "http://127.0.0.1:4723"
 )
+
+# Device profile used when an AVD named above has to be created. Anything else is created on the
+# phone profile, which is the shape the rest of the suite assumes.
+$AvdDeviceProfiles = @{
+    "FigureDrawing_Pixel" = "pixel_6"
+    "FigureDrawing_Fold"  = "7.6in Foldable"
+}
+$SystemImage = "system-images;android-35;google_apis;x86_64"
 
 # NOTE: deliberately NOT 'Stop'. appium/adb/emulator log progress to stderr, which PowerShell
 # wraps as NativeCommandError; with 'Stop' that aborts the script on harmless output. Critical
@@ -63,6 +77,30 @@ if ($drivers -notmatch "uiautomator2") {
 }
 
 # 2. Emulator -------------------------------------------------------------------------------------
+# Create the AVD on first use rather than making every machine set one up by hand. The foldable is
+# the one the rail-layout test wants; the phone profile is the default for everything else.
+$existingAvds = (& $emulator -list-avds) | ForEach-Object { $_.Trim() }
+if ($existingAvds -notcontains $Avd) {
+    $profile = $AvdDeviceProfiles[$Avd]
+    if (-not $profile) { $profile = "pixel_6" }
+    Write-Host "Creating AVD $Avd ($profile)..." -ForegroundColor Cyan
+
+    $avdManager = Get-ChildItem (Join-Path $Sdk "cmdline-tools") -Filter "avdmanager.bat" -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if (-not $avdManager) { Die "avdmanager not found under $Sdk\cmdline-tools. Install the Android SDK command-line tools." }
+
+    # "no" answers avdmanager's "start from a custom hardware profile?" prompt.
+    "no" | & $avdManager create avd -n $Avd -k $SystemImage -d $profile | Write-Host
+    if ($LASTEXITCODE -ne 0) { Die "Failed to create AVD $Avd. Is $SystemImage installed (sdkmanager)?" }
+
+    # The default 800M data partition fills up once the app plus the seeded images are on it.
+    $config = Join-Path $env:USERPROFILE ".android\avd\$Avd.avd\config.ini"
+    if (Test-Path $config) {
+        (Get-Content $config) -replace '^disk\.dataPartition\.size\s*=.*$', 'disk.dataPartition.size=6442450944' |
+            Set-Content $config -Encoding ascii
+    }
+}
+
 $attached = (& $adb devices) | Select-String "device$"
 if (-not $attached) {
     Write-Host "Booting emulator $Avd..." -ForegroundColor Cyan

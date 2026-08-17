@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -184,6 +185,61 @@ public class SessionScreenContractTests
     [InlineData("summary_settings_text")]
     public void Strings_DeclaresTheImportedPlayerStrings(string name) =>
         Assert.Contains(name, StringResourceNames());
+
+    // Galaxy Z Fold7 regression: with the rail beside the pose it is a fixed-width column, and the
+    // four tool chips share one row inside it. Chip (wrap_content, full padding) asks for more room
+    // than that row has, so the labels wrapped mid-word - "Grayscal / e". Chip.Tool is the style
+    // that makes a chip fit its share of the row instead of wrapping.
+    [Theory]
+    [InlineData("chip_grayscale")]
+    [InlineData("chip_flip")]
+    [InlineData("chip_grid")]
+    [InlineData("chip_blur")]
+    [InlineData("chip_zoom_in")]
+    [InlineData("chip_zoom_out")]
+    public void ToolChips_UseTheNonWrappingChipStyle(string id) =>
+        Assert.Equal("@style/Chip.Tool", Element(id).Attribute("style")?.Value);
+
+    // What makes the label fit: one line only, and a 0dp/weight share of the row rather than the
+    // chip's own idea of how wide it should be. The fixed height is what keeps the row even — a
+    // chip that measures itself would come out a different height from its neighbours.
+    [Fact]
+    public void ChipToolStyle_KeepsLabelsOnOneLineInAWeightedShareOfTheRow()
+    {
+        var items = Style("Chip.Tool");
+
+        Assert.Equal("1", items["android:maxLines"]);
+        Assert.Equal("0dp", items["android:layout_width"]);
+        Assert.Equal("1", items["android:layout_weight"]);
+        Assert.Equal("@dimen/chip_min_height", items["android:layout_height"]);
+    }
+
+    // "Grayscale" is the label that ran out of room; it needs more of the row than the short ones.
+    [Fact]
+    public void GrayscaleChip_TakesAWiderShareOfTheRow_ThanTheShortLabels()
+    {
+        // Invariant: these are Android resource values, not culture-formatted numbers.
+        var grayscale = double.Parse(
+            Element("chip_grayscale").Attribute(Android + "layout_weight")!.Value, CultureInfo.InvariantCulture);
+
+        foreach (var id in new[] { "chip_flip", "chip_grid", "chip_blur" })
+        {
+            // No override means the style's weight of 1.
+            var weight = Element(id).Attribute(Android + "layout_weight")?.Value ?? "1";
+            Assert.True(grayscale > double.Parse(weight, CultureInfo.InvariantCulture),
+                $"chip_grayscale (weight {grayscale}) must be wider than {id} (weight {weight}).");
+        }
+    }
+
+    static IReadOnlyDictionary<string, string> Style(string name)
+    {
+        var style = XDocument.Load(TestPaths.Path("Resources", "values", "styles.xml"))
+            .Root!.Elements("style")
+            .First(e => e.Attribute("name")?.Value == name);
+
+        return style.Elements("item")
+            .ToDictionary(e => e.Attribute("name")!.Value, e => e.Value);
+    }
 
     static XElement Element(string id) =>
         XDocument.Load(TestPaths.Path("Resources", "layout", "activity_session.xml"))

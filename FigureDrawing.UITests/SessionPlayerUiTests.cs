@@ -1,3 +1,4 @@
+using OpenQA.Selenium;
 using Xunit.Abstractions;
 
 namespace FigureDrawing.UITests;
@@ -131,6 +132,84 @@ public class SessionPlayerUiTests(AppiumAppFixture app, ITestOutputHelper output
         Assert.True(g.WaitForId("session_image", TimeSpan.FromSeconds(5))?.Displayed == true,
             "An image should still be shown after advancing.");
     }
+
+    // Galaxy Z Fold7 regression. Once the screen is wide enough the rail stops being a full-width
+    // strip under the pose and becomes a fixed-width column beside it (rail_width), with the four
+    // viewing-tool chips sharing one row inside that column. Under the old Chip style each chip
+    // asked for its natural width, got less, and wrapped its label mid-word - "Grayscal / e". A
+    // wrapped label is a two-line chip, so what this checks is that every tool chip is still exactly
+    // as tall as a chip whose label cannot wrap, and that none of them spill outside the rail.
+    [Fact]
+    public void ToolChips_OnAWideScreen_StayOnOneLineInsideTheRail()
+    {
+        if (Ready() is not { } g) return;
+
+        // A long pose: the assertions read the rail's geometry, so nothing should advance under them.
+        StartSession(g, imageCount: 3, seconds: 60);
+        Assert.NotNull(g.WaitForId("session_image", TimeSpan.FromSeconds(10)));
+
+        var startingOrientation = g.Driver.Orientation;
+        try
+        {
+            Assert.True(WidenUntilRailIsAColumn(g),
+                "Could not get the player into its wide (fold-open) layout, where the rail is a column beside the pose.");
+
+            // Bounds are taken against the window, not against session_rail: the rail is a plain
+            // container, and the accessibility node reported for it covers only the region its
+            // content occupies rather than the 328dp column the layout gives it.
+            var screenWidth = g.Driver.Manage().Window.Size.Width;
+
+            // "−" and "+" are one glyph each and cannot wrap at any width, so their height is what
+            // a single-line chip measures on this device.
+            var oneLine = g.FindById("chip_zoom_out").Size.Height;
+            var chipIds = new[] { "chip_grayscale", "chip_flip", "chip_grid", "chip_blur" };
+            var tops = new List<int>();
+
+            foreach (var id in chipIds)
+            {
+                var chip = g.FindById(id);
+                tops.Add(chip.Location.Y);
+
+                Assert.True(Math.Abs(chip.Size.Height - oneLine) <= 1,
+                    $"{id} is {chip.Size.Height}px tall against {oneLine}px for a single-line chip — its label wrapped.");
+                Assert.True(chip.Location.X >= 0 && chip.Location.X + chip.Size.Width <= screenWidth,
+                    $"{id} spans {chip.Location.X}..{chip.Location.X + chip.Size.Width}px, off a {screenWidth}px screen.");
+            }
+
+            // All four on one row: a chip pushed onto its own line is the other way the row can fail.
+            Assert.True(tops.Max() - tops.Min() <= 1,
+                $"The tool chips are not on one row (tops: {string.Join(", ", tops)}).");
+
+            // The label that wrapped is the long one, and what stops it wrapping is being given a
+            // wider share of the row than "Blur" gets. Equal shares are the broken state, and with
+            // one line pinned they would clip rather than grow, so widths are what has to be
+            // checked, not heights.
+            var grayscale = g.FindById("chip_grayscale").Size.Width;
+            var blur = g.FindById("chip_blur").Size.Width;
+            Assert.True(grayscale >= blur * 1.4,
+                $"chip_grayscale is {grayscale}px against {blur}px for chip_blur — 'Grayscale' needs a wider share of the row than 'Blur'.");
+        }
+        finally
+        {
+            g.Driver.Orientation = startingOrientation;
+            Thread.Sleep(1000);
+        }
+    }
+
+    // True once the player is in its wide layout. A foldable emulator is already wide unfolded, so
+    // the rotation is only for running this on a phone-shaped device. session_progress_group is the
+    // app's own tell: SessionActivity shows it only when the rail is a column (a Gone view drops out
+    // of the hierarchy entirely, so "present" is the same question as "wide").
+    static bool WidenUntilRailIsAColumn(AppiumGuard g)
+    {
+        if (IsWide(g)) return true;
+
+        g.Driver.Orientation = ScreenOrientation.Landscape;
+        return g.WaitUntil(_ => IsWide(g), TimeSpan.FromSeconds(10));
+    }
+
+    static bool IsWide(AppiumGuard g) =>
+        g.FindAllById("session_progress_group").Any(v => v.Displayed);
 
     // "m:ss" / "h:mm:ss" -> total seconds.
     static int Seconds(string display)
