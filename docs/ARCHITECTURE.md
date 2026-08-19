@@ -296,8 +296,13 @@ Rules:
   build number) and `android:versionCode` is `major*1000000 + minor*10000 + patch*100 + build`.
   The packing is why minor/patch/build are capped at 99 — a field at 100 carries into the one above
   and two different releases would ship the same code, which a device reads as "not an upgrade".
-- Bump with `pwsh scripts/bump-version.ps1 -Patch|-Minor|-Major|-Build|-Set 2.0.0`; a semantic bump
-  resets the build number. CI can stamp one build without a commit via `-p:FdBuildNumber=N`.
+- Bump the semantic part with `pwsh scripts/bump-version.ps1 -Patch|-Minor|-Major|-Set 2.0.0`; a
+  semantic bump resets the build number to 0. CI can stamp one build without a commit via
+  `-p:FdBuildNumber=N`.
+- The build number belongs to `scripts/build-apk.ps1`: each run consumes the next one and writes it
+  back to `version.props` after the publish succeeds, so two APKs of the same commit never share a
+  versionCode. `-NoBump` builds the file as it stands; `-BuildNumber N` pins one without editing the
+  file. At 99 the build stops — the reset on a semantic bump is what keeps the field in range.
 - `scripts/build-apk.ps1` names its output `artifacts/FigureDrawing-<version>-<config>.apk` and
   writes a matching `.json` manifest (versionCode, commit, dirty flag, SHA-256, UTC time), so a
   generated APK can be traced back to the source it came from.

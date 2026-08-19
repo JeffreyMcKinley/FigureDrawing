@@ -11,10 +11,16 @@
        .json manifest beside it (version, versionCode, commit, UTC time, SHA-256)
     3. optionally `adb install -r` it onto an attached phone (-Install)
 
-  Versioning: the version comes from version.props (see that file and scripts\bump-version.ps1);
-  this script never invents one. Every generated APK is therefore identifiable from its filename
-  alone, and the manifest ties it back to the exact commit it was built from. -BuildNumber stamps a
-  rebuild of the same semantic version without editing the file — use it from CI.
+  Versioning: the semantic version comes from version.props (see that file and
+  scripts\bump-version.ps1); this script never invents one. It does own the build number: each run
+  consumes the next one (1.2.3+4 -> 1.2.3+5) and writes it back to version.props after a successful
+  publish, so two APKs built from the same commit never claim the same versionCode and a phone
+  accepts the second as an upgrade. A semantic bump resets the count to 0 — that reset is what keeps
+  the field under its 99 ceiling; at 99 this script stops and tells you to bump.
+
+  Opt out with -NoBump (build exactly what version.props says) or -BuildNumber N (pin one for this
+  build without editing the file — use that from CI). Every generated APK is therefore identifiable
+  from its filename alone, and the manifest ties it back to the exact commit it was built from.
 
   Signing: with no -KeyStore the APK is signed with the local Android debug key. That installs on a
   normal phone (USB / "install unknown apps") but is NOT suitable for Play Store upload. Pass
@@ -31,7 +37,8 @@
   pwsh scripts\build-apk.ps1
   pwsh scripts\build-apk.ps1 -Install                       # build, then adb install to the phone
   pwsh scripts\build-apk.ps1 -Configuration Debug -Install
-  pwsh scripts\build-apk.ps1 -BuildNumber 7                  # 1.2.3 rebuilt as 1.2.3.7
+  pwsh scripts\build-apk.ps1 -NoBump                         # build version.props as it stands
+  pwsh scripts\build-apk.ps1 -BuildNumber 7                  # 1.2.3 rebuilt as 1.2.3.7, file untouched
   pwsh scripts\build-apk.ps1 -KeyStore C:\keys\fd.keystore -KeyAlias fd -KeyPass hunter2
 #>
 [CmdletBinding()]
@@ -41,9 +48,11 @@ param(
     [string]$Jdk = $env:JavaSdkDirectory,
     [string]$Sdk = $env:AndroidSdkDirectory,
     [string]$OutDir = "",
-    # -1 means "whatever version.props says"; 0-99 overrides it for this build only.
+    # -1 means "consume the next build number and write it back"; 0-99 pins one for this build only
+    # and leaves version.props untouched (see -NoBump).
     [ValidateRange(-1, 99)]
     [int]$BuildNumber = -1,
+    [switch]$NoBump,
     [switch]$Install,
     [string]$Target = "",
     [string]$KeyStore = "",
@@ -60,8 +69,21 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 function Die($msg) { Write-Host $msg -ForegroundColor Red; exit 1 }
 
 # Version first: the numbers name the output file and go into the manifest, and a malformed
-# version.props should stop the build before a 40s publish, not after it.
+# version.props (or a full build-number field) should stop the build before a 40s publish, not
+# after it.
 $version = Get-FdVersion -RepoRoot $repoRoot
+
+# Which build number this APK gets, and whether version.props learns about it:
+#   default          the next one, written back after a successful publish, so no two APKs of the
+#                    same semantic version ever share a versionCode
+#   -BuildNumber N   pinned for this build only; CI stamps a rebuild without touching the file
+#   -NoBump          exactly what version.props says now (rebuilding an artifact byte-for-byte)
+$persistBuildNumber = $false
+if ($BuildNumber -lt 0 -and -not $NoBump) {
+    try { $BuildNumber = Get-FdNextBuildNumber -RepoRoot $repoRoot } catch { Die $_.Exception.Message }
+    $persistBuildNumber = $true
+}
+
 if ($BuildNumber -ge 0 -and $BuildNumber -ne $version.Build) {
     $version.Build = $BuildNumber
     $version.Full  = if ($BuildNumber -eq 0) { $version.Semantic } else { "$($version.Semantic).$BuildNumber" }
@@ -108,6 +130,12 @@ if ($KeyStore) {
 Write-Host "Publishing $Configuration APK $($version.Full) (versionCode $($version.Code))..." -ForegroundColor Cyan
 & dotnet publish @publishArgs
 if ($LASTEXITCODE -ne 0) { Die "Publish failed." }
+
+# Only now: a failed publish must not consume a build number, or the numbers gap for nothing.
+if ($persistBuildNumber) {
+    Set-FdBuildNumber -Build $version.Build -RepoRoot $repoRoot
+    Write-Host "version.props: FdBuildNumber -> $($version.Build)" -ForegroundColor DarkGray
+}
 
 # 2. Locate + copy ---------------------------------------------------------------------------------
 $publishDir = Join-Path $repoRoot "bin\$Configuration\$tfm\publish"

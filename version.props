@@ -12,6 +12,10 @@
       FdBuildNumber                                 - re-releases of the same semantic version
                                                       (a rebuild that fixes packaging, not code).
 
+    FdBuildNumber is written by scripts/build-apk.ps1, which consumes the next one on every build
+    and commits it here after the publish succeeds. Expect it to move without you editing it; a
+    semantic bump resets it to 0.
+
     Ranges are enforced by VersionTests: minor, patch and build are each 0-99, because all four
     numbers are packed into one Android versionCode:
 
@@ -27,7 +31,7 @@
     <FdVersionMajor>0</FdVersionMajor>
     <FdVersionMinor>1</FdVersionMinor>
     <FdVersionPatch>1</FdVersionPatch>
-    <FdBuildNumber>1</FdBuildNumber>
+    <FdBuildNumber>2</FdBuildNumber>
   </PropertyGroup>
 
 </Project>

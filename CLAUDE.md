@@ -59,3 +59,20 @@ unit tested there; Activities only wire Core to views.
 - When I ask for a feature, write tests first
 - Tests should FAIL initially (no implementation exists)
 - Only after tests are written, implement minimal code to pass
+
+## Agent skills
+
+### Issue tracker
+
+Issues are markdown files: `docs/prds/FD-0NN-<slug>.md`, indexed in `docs/prds/README.md`. There is
+no `gh` CLI here. See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, unrenamed, carried on a `Status:` line in each ticket. See
+[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context. The glossary is `docs/ARCHITECTURE.md` §15/§16; object rules and invariant ids are
+in `docs/DOMAIN-MODEL.md`. See [`docs/agents/domain.md`](docs/agents/domain.md).
