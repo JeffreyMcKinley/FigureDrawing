@@ -30,10 +30,12 @@ Four tiers, cheapest first — a finding must name which tier the missing test b
 1. **Unit tests** (`FigureDrawing.Tests`, one file per Core type — or per invariant family, for a
    type that owns several, as the session aggregate does) — the default. Every rule in Core
    lives here, made deterministic by the injected clock, `Random`, and loader.
-2. **Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`, `AndroidBuildTests`)
-   — parse source and XML as files, no device. They catch the runtime-only failures the compiler
-   misses: a view id referenced in code but absent from the layout, a missing string, a build
-   property regression.
+2. **Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`,
+   `TypefaceContractTests`, `FolderMemoryContractTests`, `AndroidBuildTests`) — parse source and
+   XML as files, no device. They catch the runtime-only failures the compiler misses: a view id
+   referenced in code but absent from the layout, a missing string, a build property regression.
+   They strip comments and literals before asserting, and pin which API a method reaches rather
+   than how a statement is spelled.
 3. **E2E-model tests** (`*E2ETests.cs`) — drive the real Core objects through a whole session with
    no Android, covering engine/player/countdown interaction.
 4. **UI tests** (`FigureDrawing.UITests`, Appium) — last resort, for behaviour genuinely unreachable

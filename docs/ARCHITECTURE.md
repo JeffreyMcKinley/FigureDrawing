@@ -60,11 +60,12 @@ project means adding a fourth exclude.
 | `DrawingSession<TImage>` | The session aggregate: the draft (inputs, Start gate, estimate), the sequence, the pose clock, the break, resolving an id to a displayable image, and the totals |
 | `ViewerTools` | Grayscale/flip/grid/blur flags and the zoom range for the pose on screen |
 | `ReferenceLibrary` / `IDocumentTree` / `DocumentEntry` | The picked folder, the recursive image discovery beneath it, and the pool |
+| `LibraryReference` / `PersistedGrant` | Whether the remembered folder is still worth acting on, and whether its read grant is still held |
 | `BitmapMath` | Power-of-two sub-sample calculation |
 | `GridContrast` | Which tone each rule-of-thirds guide takes from the pose under it |
 | `Data/Settings` | The persisted settings document and its LiteDB store |
 
-Nine domain objects, deliberately: what each one is and why the neighbours it absorbed are not
+Ten domain objects, deliberately: what each one is and why the neighbours it absorbed are not
 separate concepts is [DOMAIN-MODEL.md §1](DOMAIN-MODEL.md) and [§9](DOMAIN-MODEL.md#9-consolidation).
 
 Core types are deterministic and side-effect free apart from `Settings`. They expose state as
@@ -133,7 +134,8 @@ under test.
   `ExtraGrayscale`, `ExtraKeepAwake`, `ExtraChime`); `MainActivity.StartSession` fills them. Add a new input by adding a constant, not a string literal
   at the call site, and not a static or singleton.
 - **Persisted state** is the single `Settings` LiteDB document. It seeds the setup inputs on launch
-  and records the last folder. `Android.Provider` also declares a `Settings`, so `MainActivity`
+  and records the last folder — which is both what a launch restores and where the picker reopens
+  (`MainActivity.RememberedTree` / `LastPickedDocumentUri`). `Android.Provider` also declares a `Settings`, so `MainActivity`
   carries a `using Settings = FigureDrawing.Data.Settings;` alias.
 - **(confirm)** Session state is *not* currently saved in `OnSaveInstanceState`, so process death
   restarts the pose. That is a known gap, not a pattern to copy. `SessionActivity` mitigates the
@@ -190,8 +192,9 @@ under test.
 ## 9. Errors and logging
 
 - All logs go through `Android.Util.Log` with the tag constant `LogTag = "FigureDrawing"`.
-- Anything crossing the system boundary — SAF results, URI permission grants, image decoding — is
-  wrapped in `try`/`catch`, logged, and turned into a visible message rather than a crash.
+- Anything crossing the system boundary — SAF results, URI permission grants, image decoding,
+  building a picker hint from a persisted tree URI — is wrapped in `try`/`catch`, logged, and
+  turned into a visible message rather than a crash.
   `MainActivity.OnActivityResult` is the reference example.
 - Catching broad `Exception` is acceptable at those boundaries, and only there. Elsewhere, catch the
   specific type or let it throw.
@@ -217,12 +220,18 @@ type owns several invariant families: the session aggregate has one file per fam
 `DrawingSessionImageTests`, `DrawingSessionBreakTests`, `DrawingSessionTimeAccountingTests`), which
 is what keeps a 350-test suite navigable after the consolidation.
 
-**Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`, `AndroidBuildTests`) —
+**Contract tests** (`UiResourceContractTests`, `SessionScreenContractTests`, `TypefaceContractTests`,
+`FolderMemoryContractTests`, `AndroidBuildTests`) —
 a pattern worth understanding before touching the Android layer. They parse the *source and XML as
 files* rather than running them, so they need no device but still catch the runtime-only failures
 that Xamarin's compile-time checks miss: a view id referenced from code but absent from the layout,
 a missing string, a build property regression. `TestPaths` locates the repo root by walking up to
 `FigureDrawing.sln`, since the working directory differs between `nx` and `dotnet test`.
+
+A contract test reads *code*, not prose: `FolderMemoryContractTests` strips comments and string
+literals before it asserts anything, because an assertion a comment can satisfy stays green
+through the deletion it exists to catch. Assert which API a method reaches, never how a statement
+is spelled — pinning a local's name or a pattern's syntax fails a refactor that still behaves.
 
 **E2E-model tests** (`SessionE2ETests.cs`) — drive the Core objects through a whole session in one
 test, without Android: the library enumerates a fake tree, the draft produces the config, and the
@@ -234,7 +243,7 @@ only for behavior genuinely unreachable from Core. Run them with `scripts/run-ap
 which is the only supported entry point: it installs the toolchain, boots the emulator, builds and
 installs a self-contained APK, resets app + picker state, and manages the server.
 
-Three rules the harness depends on, each learned from a failure that looked like an app bug:
+Four rules the harness depends on, each learned from a failure that looked like an app bug:
 
 - **One session per device.** The UiAutomator2 driver installs a single instrumentation on the
   device and force-stops any running instance when a session starts, so two concurrent sessions kill
@@ -248,10 +257,18 @@ Three rules the harness depends on, each learned from a failure that looked like
   the player is a separate Activity, so "press Back until the package is ours" is already satisfied
   on the player screen and never reaches the tabs. `AppiumGuard.ReturnToMainScreen` keys off the
   current *Activity* instead.
-- **The picker must be walked into a subfolder.** Android refuses to grant the root of shared
-  storage through `ACTION_OPEN_DOCUMENT_TREE` — it shows "Can't use this folder" and offers no
-  confirm button — and that root is exactly where DocumentsUI opens with no history.
-  `AppiumGuard.SelectDefaultFolder` taps the seeded folder by name before confirming.
+- **The picker's location is checked positively, never inferred.** Android refuses to grant the
+  root of shared storage through `ACTION_OPEN_DOCUMENT_TREE` — it shows "Can't use this folder"
+  and offers no confirm button — and that root is where DocumentsUI opens with no history, so on a
+  first pick the seeded folder has to be walked into. Once a folder is remembered the app passes
+  `EXTRA_INITIAL_URI` and the picker is inside it already, so the walk is skipped. `AppiumGuard.
+  SelectDefaultFolder` decides between the two by asking where the picker *is* (the folder name in
+  the toolbar) and fails when it is neither inside the folder nor showing it as a row — a missing
+  row taken as "already inside" would confirm whatever directory happened to be on screen.
+- **A UI test must be able to fail.** DocumentsUI reopens where it was last left, which mimics the
+  app supplying a starting point, so `ReopeningPicker_StartsInTheLastFolder` calls
+  `UiTestEnvironment.ResetPickerState()` first. The app's URI grants live in the system and
+  survive it.
 
 Rules:
 

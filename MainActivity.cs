@@ -371,7 +371,64 @@ namespace FigureDrawing
         void PickFolder()
         {
             var intent = new Intent(Intent.ActionOpenDocumentTree);
+
+            // Open the picker on the folder chosen last time, so reusing the same library is one tap
+            // and picking its sibling starts next door rather than at the provider root. A hint
+            // only: the picker is free to ignore it, and the drawer can still browse anywhere.
+            if (LastPickedDocumentUri() is { } initial)
+                intent.PutExtra(DocumentsContract.ExtraInitialUri, initial);
+
             StartActivityForResult(intent, PickFolderRequestCode);
+        }
+
+        // The remembered library as a *document* uri, which is what the picker navigates to —
+        // handed a bare tree uri it lands at the root of the provider instead. Null when there is
+        // nothing usable to start from: a hint that cannot be built must leave the picker opening at
+        // its default rather than failing to open at all.
+        Android.Net.Uri? LastPickedDocumentUri()
+        {
+            if (RememberedTree() is not { } treeUri)
+                return null;
+
+            try
+            {
+                var documentId = DocumentsContract.GetTreeDocumentId(treeUri);
+                return documentId is null
+                    ? null
+                    : DocumentsContract.BuildDocumentUriUsingTree(treeUri, documentId);
+            }
+            catch (Exception error)
+            {
+                // The reference itself is not logged: it carries the artist's own folder path, and
+                // it is already recorded once where the folder was picked (§9).
+                Log.Warn(LogTag, $"Could not build a picker hint: {error.Message}");
+                return null;
+            }
+        }
+
+        // The remembered library, as a uri, when it is still worth acting on: something is stored,
+        // it is a SAF tree reference (LibraryReference), and the read grant that made it usable is
+        // still held. Whether it is usable is Core's rule; enumerating the platform's grants and
+        // parsing the uri is this layer's job.
+        Android.Net.Uri? RememberedTree()
+        {
+            if (!LibraryReference.TryParse(settings.LastCollection, out var reference))
+                return null;
+
+            if (!LibraryReference.HasReadGrant(reference, PersistedGrants()))
+            {
+                Log.Info(LogTag, "Remembered folder is no longer granted; nothing to restore.");
+                return null;
+            }
+
+            return Android.Net.Uri.Parse(reference);
+        }
+
+        // The platform's persisted permissions, reduced to what the rule needs.
+        IEnumerable<PersistedGrant> PersistedGrants()
+        {
+            foreach (var permission in ContentResolver!.PersistedUriPermissions)
+                yield return new PersistedGrant(permission.Uri?.ToString(), permission.IsReadPermission);
         }
 
         protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
@@ -413,38 +470,27 @@ namespace FigureDrawing
             }
         }
 
+        // Comes up with the library the artist last used already loaded, so a relaunch is not a
+        // second trip to the picker. A revoked grant, a deleted folder or a value this app can no
+        // longer read is the ordinary case, not an error: the empty state shows and Start stays shut
+        // (INV-GRP-5).
         void RestoreLastFolder()
         {
-            if (string.IsNullOrEmpty(settings.LastCollection))
+            if (RememberedTree() is not { } treeUri)
                 return;
 
-            var treeUri = Android.Net.Uri.Parse(settings.LastCollection);
-            if (treeUri is null)
-                return;
-
-            // Only reload if we still hold a persisted read permission for the tree.
-            foreach (var permission in ContentResolver!.PersistedUriPermissions)
+            // A grant that is still listed can still be unusable — an unmounted volume or an
+            // uninstalled provider. This runs during OnCreate, and the stale uri is persisted, so an
+            // escape here would be a crash on every launch from now on.
+            try
             {
-                if (permission.IsReadPermission && permission.Uri?.Equals(treeUri) == true)
-                {
-                    // A grant that is still listed can still be unusable — an unmounted volume or an
-                    // uninstalled provider. This runs during OnCreate, and the stale uri is
-                    // persisted, so an escape here would be a crash on every launch from now on.
-                    try
-                    {
-                        LoadFolder(treeUri);
-                    }
-                    catch (Exception error)
-                    {
-                        Log.Warn(LogTag, $"Restoring {treeUri} failed: {error.Message}");
-                        ResetLibrary();
-                    }
-
-                    return;
-                }
+                LoadFolder(treeUri);
             }
-
-            Log.Info(LogTag, $"Persisted permission for {treeUri} no longer held; skipping restore.");
+            catch (Exception error)
+            {
+                Log.Warn(LogTag, $"Restoring the remembered folder failed: {error.Message}");
+                ResetLibrary();
+            }
         }
 
         // Builds the reference library for the picked tree (the recursive walk and the pool live in

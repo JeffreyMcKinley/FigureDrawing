@@ -67,7 +67,9 @@ internal static class UiTestEnvironment
     // across every test, so a sibling that picks a folder leaves that choice behind.
     public static void ResetAppState() => RunAdb("shell", "pm", "clear", AppPackage);
 
-    // Replaces the default picker folder's contents: empties it, then pushes `imageCount` valid PNGs.
+    // Replaces the default picker folder's contents: empties it, then pushes `imageCount` valid
+    // PNGs. The files go over in ONE `adb push` of a staging directory — a push per file costs a
+    // process launch each and this runs before most tests in the suite.
     public static void SeedDefaultFolder(int imageCount)
     {
         RunAdb("shell", "rm", "-rf", DefaultPickerDir);
@@ -75,14 +77,43 @@ internal static class UiTestEnvironment
 
         if (imageCount > 0)
         {
-            var local = Path.Combine(Path.GetTempPath(), "fd-seed.png");
-            File.WriteAllBytes(local, Convert.FromBase64String(OnePixelPngBase64));
+            var staging = Path.Combine(Path.GetTempPath(), "fd-seed");
+            if (Directory.Exists(staging))
+                Directory.Delete(staging, recursive: true);
+
+            Directory.CreateDirectory(staging);
+
+            var png = Convert.FromBase64String(OnePixelPngBase64);
             for (var i = 0; i < imageCount; i++)
-                RunAdb("push", local, $"{DefaultPickerDir}/img{i}.png");
+                File.WriteAllBytes(Path.Combine(staging, SeededImageName(i)), png);
+
+            // Trailing "/." pushes the CONTENTS of the staging dir, not the dir itself.
+            RunAdb("push", Path.Combine(staging, "."), DefaultPickerDir);
         }
 
         RunAdb("shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
             "-d", $"file://{DefaultPickerDir}");
+    }
+
+    // The name of the nth seeded image. Owned here so a test asserting on a seeded file cannot
+    // drift from what seeding actually writes.
+    public static string SeededImageName(int index) => $"img{index}.png";
+
+    // Wipes the system picker's own state — its last-browsed location above all. DocumentsUI
+    // reopens where it was left, which is indistinguishable from the app supplying a starting
+    // point, so a test asserting that the app put the picker somewhere has to clear this first.
+    // The app's persisted URI grants live in the system, not in DocumentsUI's data, and survive it.
+    //
+    // Both package names are tried: the picker is `com.google.android.documentsui` on Play-flavoured
+    // images and `com.android.documentsui` on AOSP ones, and clearing the absent one fails
+    // harmlessly.
+    public static void ResetPickerState()
+    {
+        foreach (var package in new[] { "com.google.android.documentsui", "com.android.documentsui" })
+        {
+            try { RunAdb("shell", "pm", "clear", package); }
+            catch (InvalidOperationException) { /* not installed on this image */ }
+        }
     }
 
     static string FindRepoRoot()

@@ -40,7 +40,11 @@
     <ProjectReference Include="FigureDrawing.Core\FigureDrawing.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include=".claude\skills\" />
     <Folder Include="docs\BugScreenshots\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include=".claude\hooks\test-on-save.sh" />
   </ItemGroup>
 
   <!--

@@ -56,10 +56,16 @@ public class FolderPickerUiTests(AppiumAppFixture app, ITestOutputHelper output)
         Assert.Contains("No folder selected", label.Text, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Tapping Pick folder opens the system picker. Asserted on a FIRST RUN, with nothing
+    // remembered: that is the state where MainActivity has no starting point to hand the picker, and
+    // a hint it cannot build must not cost the artist the picker itself.
     [Fact]
     public void TappingPickFolder_OpensSystemDocumentPicker()
     {
         if (Ready() is not { } g) return;
+
+        UiTestEnvironment.ResetAppState();
+        g.Driver.ActivateApp(UiTestEnvironment.AppPackage);
         g.OpenTab("tab_images");
 
         g.FindById("pick_button").Click();
@@ -85,7 +91,7 @@ public class FolderPickerUiTests(AppiumAppFixture app, ITestOutputHelper output)
         if (Ready() is not { } g) return;
 
         UiTestEnvironment.SeedDefaultFolder(imageCount: 0);
-        g.SelectDefaultFolder();
+        g.SelectDefaultFolder(expectImages: 0);
 
         AssertAppAlive(g);
         Assert.Contains("No images found", g.FindById("empty_label").Text, StringComparison.OrdinalIgnoreCase);
@@ -100,11 +106,69 @@ public class FolderPickerUiTests(AppiumAppFixture app, ITestOutputHelper output)
         if (Ready() is not { } g) return;
 
         UiTestEnvironment.SeedDefaultFolder(imageCount: 5);
-        g.SelectDefaultFolder();
+        g.SelectDefaultFolder(expectImages: 5);
 
         AssertAppAlive(g);
         // empty_label is set to View.Gone when images load, so it drops out of the tree.
         Assert.Empty(g.FindAllById("empty_label"));
+    }
+
+    // The picked folder is remembered across launches (Settings.LastCollection + the persisted uri
+    // grant): after a restart the library is already loaded, with no second trip to the picker.
+    [Fact]
+    public void PickedFolder_IsRestoredOnRelaunch()
+    {
+        if (Ready() is not { } g) return;
+
+        // Seven, not three: a count that cannot be a substring of a neighbouring one, so "restored
+        // the right folder" and "restored something" are distinguishable.
+        UiTestEnvironment.SeedDefaultFolder(imageCount: 7);
+        g.SelectDefaultFolder(expectImages: 7);
+
+        // A full stop, not just a background: restoring is OnCreate work, and a resumed process
+        // would pass this test without ever running it.
+        g.Driver.TerminateApp(UiTestEnvironment.AppPackage);
+        g.Driver.ActivateApp(UiTestEnvironment.AppPackage);
+
+        // The relaunched app comes up on the Session pane, so wait for the tab bar — the Images
+        // pane's own views are View.Gone until it is opened and cannot be waited on here.
+        Assert.NotNull(g.WaitForId("tab_images", TimeSpan.FromSeconds(15)));
+
+        g.OpenTab("tab_images");
+
+        AssertAppAlive(g);
+        Assert.Empty(g.FindAllById("empty_label"));
+        Assert.Equal(7, g.LibraryCount());
+    }
+
+    // Picking again starts where the artist left off: MainActivity passes the remembered folder as
+    // EXTRA_INITIAL_URI, so the picker opens inside it rather than wherever it was last used.
+    [Fact]
+    public void ReopeningPicker_StartsInTheLastFolder()
+    {
+        if (Ready() is not { } g) return;
+
+        UiTestEnvironment.SeedDefaultFolder(imageCount: 2);
+        g.SelectDefaultFolder(expectImages: 2);
+
+        // Without this the test cannot fail: DocumentsUI reopens where it was last left, which is
+        // the folder the line above just browsed into, so the picker would land there with or
+        // without the app's hint. Clearing the picker leaves the app's uri grant untouched — grants
+        // live in the system, not in DocumentsUI's data.
+        UiTestEnvironment.ResetPickerState();
+
+        g.OpenTab("tab_images");
+        g.FindById("pick_button").Click();
+        Assert.True(
+            g.WaitUntil(d => d.CurrentPackage != UiTestEnvironment.AppPackage, TimeSpan.FromSeconds(15)),
+            "Picker never opened.");
+
+        var folder = UiTestEnvironment.DefaultPickerFolderName;
+        var inside = g.PickerIsInside(folder, TimeSpan.FromSeconds(10))
+                     || g.PickerShowsRow(UiTestEnvironment.SeededImageName(0), TimeSpan.FromSeconds(5));
+
+        g.ReturnToMainScreen();
+        Assert.True(inside, $"Picker did not open inside '{folder}' — the remembered folder was not passed as the starting point.");
     }
 
     // Proves the app did not crash: it is foregrounded and its main view still resolves.

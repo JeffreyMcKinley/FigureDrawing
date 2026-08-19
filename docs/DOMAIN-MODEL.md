@@ -39,7 +39,7 @@ object; **Port** is an interface the domain defines and the platform implements.
 
 ## 1. Object catalogue
 
-Nine objects, down from fifteen. The count is the point: this is a single-user offline app, and a
+Ten objects, down from fifteen (the tenth arrived after the merges, not before them). The count is the point: this is a single-user offline app, and a
 concept that never varies independently of its neighbour does not earn its own type.
 
 | # | Object | Kind | Context | Invariant families | Status |
@@ -47,6 +47,7 @@ concept that never varies independently of its neighbour does not earn its own t
 | 1 | `Pose` | Value object | Reference Library → Session Execution | `INV-IMG-*`, `INV-POSE-*` | Implicit (`string` id + session state) |
 | 2 | `ReferenceLibrary` | Aggregate root | Reference Library | `INV-GRP-*`, `INV-POOL-*` | Implemented |
 | 3 | `IDocumentTree` / `DocumentEntry` | Port / value object | Reference Library | `INV-TREE-*` | Implemented |
+| 3a | `LibraryReference` / `PersistedGrant` | Domain service / value object | Reference Library ↔ Preferences | `INV-GRP-5`, `INV-SET-P5`, `INV-X-11` | Implemented |
 | 4 | `SessionSetup` | Domain service | Session Setup | `INV-SET-1..5` | Implemented |
 | 5 | `SessionConfig` | Value object | Session Setup → Execution | `INV-CFG-*` | Implemented |
 | 6 | `DrawingSession<TImage>` | Aggregate root | Session Execution | `INV-SES-*`, `INV-CD-*`, `INV-PLY-*`, `INV-SUM-*`, `INV-POSE-*` | Implemented |
@@ -430,7 +431,9 @@ dropping the write — losing preferences quietly is worse than failing loudly.
   settings toggle was flipped, a break preset was tapped. Never on a keystroke, and never from a
   background thread.
 - `INV-SET-P5` — **`LastCollection` holds a library reference, not its contents** (`INV-GRP-1`),
-  and a stale one is expected (`INV-GRP-5`).
+  and a stale one is expected (`INV-GRP-5`). The reference is what a launch restores *and* where
+  the picker reopens; whether it is still worth acting on — something stored, a SAF tree form, a
+  read grant still held — is `LibraryReference`, not the screen's judgement.
 - `INV-SET-P6` — **Losing it is survivable.** A deleted or corrupt database costs preferences and
   nothing else; the app must start with defaults.
 
@@ -503,7 +506,10 @@ These bind the objects together and are the ones most easily broken by a plausib
 - `INV-X-10` — A single bad image never ends anything but its own pose (`INV-PLY-2`); a wholly bad
   pool ends the session with a distinguishable error (`INV-PLY-3`).
 - `INV-X-11` — Every failure the platform can produce — revoked permission, missing provider,
-  decode error — has a defined domain outcome. "Throws" is not a defined outcome.
+  decode error, a persisted reference that no longer parses — has a defined domain outcome.
+  "Throws" is not a defined outcome. A reference too broken to restore leaves the empty state
+  showing; one too broken to point the picker at leaves the picker opening where it would have
+  anyway. Neither costs the artist the screen they asked for.
 
 **Consolidation**
 
@@ -530,8 +536,9 @@ invariant families has one test file per family rather than one per type.
 | `INV-PLY-*` | `DrawingSession<TImage>` | `DrawingSessionImageTests` with a fake loader |
 | `INV-VIEW-*` | `ViewerTools` | `ViewerToolsTests` |
 | `INV-SET-P*`, `INV-STO-*` | `Settings` | `SettingsTests` |
+| `INV-SET-P5`, `INV-GRP-5` (the remembered folder) | `LibraryReference` + `MainActivity`'s wiring | `LibraryReferenceTests`, `FolderMemoryContractTests`, `FolderPickerUiTests` |
 | Cross-context flows | The objects together | `SessionE2ETests` |
-| `INV-X-*` | Structural | Project references, `AndroidBuildTests`, `SessionScreenContractTests`, code review |
+| `INV-X-*` | Structural | Project references, `AndroidBuildTests`, `SessionScreenContractTests`, `FolderMemoryContractTests`, code review |
 
 Adding an invariant means adding a named test. Removing one means saying so in a ticket — an
 invariant deleted quietly is how a domain model stops describing the code.

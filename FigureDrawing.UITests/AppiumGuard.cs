@@ -38,14 +38,6 @@ internal sealed class AppiumGuard(AndroidDriver driver)
         return null;
     }
 
-    // Clicks a fully-qualified id (a system dialog button) if it happens to be on screen. The
-    // picker's confirm steps differ by Android version, so a missing one is not a failure.
-    public void ClickIdIfPresent(string fullId)
-    {
-        try { Driver.FindElement(MobileBy.Id(fullId)).Click(); }
-        catch (Exception e) { Console.WriteLine($"no '{fullId}': {e.Message.Split('\n')[0]}"); }
-    }
-
     // Session / Images / Settings are panes of one Activity since the Claude Design import, so a
     // test needing a control from another tab has to switch to it first.
     public void OpenTab(string tabId)
@@ -111,46 +103,161 @@ internal sealed class AppiumGuard(AndroidDriver driver)
         return false;
     }
 
-    // Taps a folder in the system picker by its displayed name, scrolling to it if the list is long.
-    public void TapPickerFolder(string name)
+    // Runs a lookup with the implicit wait switched off. FindElements honours the session's 10s
+    // implicit wait, so an "is it there right now?" probe would otherwise burn the whole budget of
+    // whatever loop it sits in — and a WaitUntil around it would never get a second poll.
+    T Probe<T>(Func<T> lookup)
     {
-        var byText = MobileBy.AndroidUIAutomator($"new UiSelector().text(\"{name}\")");
+        var timeouts = Driver.Manage().Timeouts();
+        var restore = timeouts.ImplicitWait;
+        timeouts.ImplicitWait = TimeSpan.Zero;
 
         try
         {
-            Driver.FindElement(byText).Click();
+            return lookup();
         }
-        catch (WebDriverException)
+        finally
+        {
+            timeouts.ImplicitWait = restore;
+        }
+    }
+
+    // A row in the picker's file list, as opposed to the same text in the toolbar. DocumentsUI puts
+    // the CURRENT folder's name in its toolbar, so a bare text() selector matches the breadcrumb of
+    // the folder we are already inside — clicking that opens an ancestor drop-down over the confirm
+    // button instead of navigating anywhere.
+    static By PickerRow(string text) =>
+        MobileBy.XPath($"//*[@text='{text}' and not(ancestor::*[contains(@resource-id,'toolbar')])]");
+
+    // The same text in the toolbar: the picker's answer to "which folder am I in".
+    static By PickerTitle(string text) =>
+        MobileBy.XPath($"//*[contains(@resource-id,'toolbar')]//*[@text='{text}']");
+
+    // Whether the picker is currently INSIDE the named folder. This is the positive check the
+    // walk-into step needs: "the row is missing" alone is equally consistent with the picker sitting
+    // somewhere else entirely, and confirming from there grants the wrong folder.
+    public bool PickerIsInside(string folderName, TimeSpan timeout) =>
+        WaitUntil(d => Probe(() => d.FindElements(PickerTitle(folderName)).Count > 0), timeout);
+
+    // Whether the picker is listing a row with this exact text — a file or a subfolder, never the
+    // toolbar. Used to assert what the picker is showing.
+    public bool PickerShowsRow(string text, TimeSpan timeout) =>
+        WaitUntil(d => Probe(() => d.FindElements(PickerRow(text)).Count > 0), timeout);
+
+    // Taps a folder row in the picker, scrolling to it if the list is long. Returns false when no
+    // such row is listed — which is the ordinary outcome once the app starts the picker inside that
+    // folder, and is never on its own taken as proof of where the picker is.
+    public bool TapPickerFolder(string name)
+    {
+        if (PickerShowsRow(name, TimeSpan.FromSeconds(5)))
+        {
+            Driver.FindElement(PickerRow(name)).Click();
+            return true;
+        }
+
+        try
         {
             Driver.FindElement(MobileBy.AndroidUIAutomator(
                 "new UiScrollable(new UiSelector().scrollable(true))" +
                 $".scrollIntoView(new UiSelector().text(\"{name}\"))"));
-            Driver.FindElement(byText).Click();
         }
+        catch (WebDriverException e)
+        {
+            Console.WriteLine($"no picker row '{name}': {e.Message.Split('\n')[0]}");
+            return false;
+        }
+
+        if (!PickerShowsRow(name, TimeSpan.FromSeconds(2)))
+            return false;
+
+        Driver.FindElement(PickerRow(name)).Click();
+        return true;
     }
 
-    // Completes a real folder selection: open the picker from the Images tab, walk into the seeded
+    // Completes a real folder selection: open the picker from the Images tab, get inside the seeded
     // folder, "USE THIS FOLDER", then the Allow-access confirm dialog (both confirms are
-    // android:id/button1 at different steps), then wait to land back in the app. Shared because all
-    // three suites need a granted library.
+    // android:id/button1 at different steps), then land back in the app. Shared because all three
+    // suites need a granted library.
     //
-    // The walk-into step is not optional. The picker opens at the root of shared storage when
-    // DocumentsUI has no history, and Android will not grant the root — it shows "Can't use this
-    // folder" with no confirm button, so every downstream assertion fails with the app still in the
-    // picker. Navigating by name also makes this independent of wherever the picker was last used.
-    public void SelectDefaultFolder()
+    // Getting inside is not optional, and where the picker starts is no longer fixed. On a first
+    // pick it opens wherever DocumentsUI left off — the root of shared storage on a cleared picker,
+    // which Android refuses to grant ("Can't use this folder", no confirm button) — so the seeded
+    // folder has to be walked into. Once a folder has been remembered, MainActivity supplies
+    // EXTRA_INITIAL_URI and the picker is inside it already. Both are fine; being somewhere else is
+    // not, and fails here rather than silently granting it.
+    //
+    // expectImages : when given, the number of images the folder was seeded with, asserted against
+    //                the library once the app is back. This is the only check that the folder that
+    //                was granted is the folder the test seeded.
+    public void SelectDefaultFolder(int? expectImages = null)
     {
+        var folder = UiTestEnvironment.DefaultPickerFolderName;
+
         OpenTab("tab_images");
         FindById("pick_button").Click();
-        Thread.Sleep(2500);
 
-        TapPickerFolder(UiTestEnvironment.DefaultPickerFolderName);
-        Thread.Sleep(1500);
+        Assert.True(
+            WaitUntil(d => d.CurrentPackage != UiTestEnvironment.AppPackage, TimeSpan.FromSeconds(15)),
+            "The system folder picker never opened.");
 
-        ClickIdIfPresent("android:id/button1");   // USE THIS FOLDER
-        Thread.Sleep(1500);
-        ClickIdIfPresent("android:id/button1");   // Allow access? -> ALLOW
-        WaitUntil(d => d.CurrentPackage == UiTestEnvironment.AppPackage, TimeSpan.FromSeconds(15));
-        Thread.Sleep(1500);                        // let OnActivityResult/LoadFolder settle
+        if (!PickerIsInside(folder, TimeSpan.FromSeconds(3)))
+        {
+            Assert.True(TapPickerFolder(folder),
+                $"The picker is neither inside '{folder}' nor showing it as a row — " +
+                "confirming from here would grant the wrong folder.");
+
+            Assert.True(PickerIsInside(folder, TimeSpan.FromSeconds(10)),
+                $"Tapped '{folder}' but the picker did not open it.");
+        }
+
+        ClickWhenPresent("android:id/button1", TimeSpan.FromSeconds(10));   // USE THIS FOLDER
+        ClickWhenPresent("android:id/button1", TimeSpan.FromSeconds(5));    // Allow access? -> ALLOW
+
+        Assert.True(
+            WaitUntil(d => d.CurrentPackage == UiTestEnvironment.AppPackage, TimeSpan.FromSeconds(15)),
+            "Never returned from the picker — the folder was not granted.");
+
+        Assert.NotNull(WaitForId("pick_button", TimeSpan.FromSeconds(10)));
+
+        if (expectImages is not { } expected)
+            return;
+
+        if (expected == 0)
+        {
+            Assert.NotNull(WaitForId("empty_label", TimeSpan.FromSeconds(10)));
+            return;
+        }
+
+        Assert.True(
+            WaitUntil(_ => LibraryCount() == expected, TimeSpan.FromSeconds(10)),
+            $"Granted folder holds {LibraryCount()} images, seeded {expected} — wrong folder granted.");
+    }
+
+    // Clicks a fully-qualified id once it appears, waiting up to the timeout. The picker's confirm
+    // steps differ by Android version, so a step that never appears is not a failure here — the
+    // caller asserts the outcome instead.
+    void ClickWhenPresent(string fullId, TimeSpan timeout)
+    {
+        var by = MobileBy.Id(fullId);
+
+        if (!WaitUntil(d => Probe(() => d.FindElements(by).Count > 0), timeout))
+        {
+            Console.WriteLine($"no '{fullId}' within {timeout.TotalSeconds}s");
+            return;
+        }
+
+        try { Driver.FindElement(by).Click(); }
+        catch (WebDriverException e) { Console.WriteLine($"'{fullId}' vanished: {e.Message.Split('\n')[0]}"); }
+    }
+
+    // The number the library pane is showing ("{0} images ready"), or -1 when it shows nothing yet.
+    public int LibraryCount()
+    {
+        var labels = Probe(() => Driver.FindElements(MobileBy.Id(UiTestEnvironment.ViewId("library_count"))));
+        if (labels.Count == 0)
+            return -1;
+
+        var digits = new string(labels[0].Text.TakeWhile(char.IsDigit).ToArray());
+        return digits.Length > 0 ? int.Parse(digits) : -1;
     }
 }
