@@ -114,9 +114,9 @@ namespace FigureDrawing
 
             ShowPane(paneSetup, tabSession);
 
-            // Restore the folder chosen on a previous launch, if the persisted URI permission
-            // is still granted. A revoked permission (folder deleted, permission cleared) is
-            // expected and simply leaves the empty state showing.
+            // Restore the folder chosen on a previous launch. A revoked permission (folder deleted,
+            // permission cleared, the platform trimming the grant) keeps the reference and says so
+            // on screen instead — the choice is still known, only the access is gone.
             RestoreLastFolder();
         }
 
@@ -135,6 +135,49 @@ namespace FigureDrawing
         {
             base.OnResume();
             UpdateStartState();
+        }
+
+        // Leaving the screen is a write moment (INV-SET-P4). Everything here is already saved where
+        // it changed, so this is the backstop for the way apps actually end: swiped off the recents
+        // list, or reclaimed while backgrounded. Neither runs OnDestroy, so a value that has only
+        // reached memory by then is a value the artist loses.
+        protected override void OnPause()
+        {
+            base.OnPause();
+
+            // The typed inputs are the only values that live nowhere but the screen — every other
+            // preference is written where it is flipped. Without this the write below would have
+            // nothing new to persist and the backstop would be decorative.
+            CaptureTypedInputs();
+            SaveSettings();
+        }
+
+        // Copies the setup inputs into the settings document when they parse. A half-typed number is
+        // not a preference, so an unparseable draft leaves the stored value alone (INV-SET-2).
+        void CaptureTypedInputs()
+        {
+            if (Draft().Config is not { } config)
+                return;
+
+            settings.PoseDurationSeconds = config.SecondsPerImage;
+            settings.SessionImageCount = config.ImageCount;
+        }
+
+        // Writes the settings document, and never lets a failed write take the screen down with it:
+        // losing a preference is survivable (INV-SET-P6), crashing on the way out is not.
+        void SaveSettings()
+        {
+            try
+            {
+                // Null-conditional on purpose: OnCreate can throw before Settings.Open returns, and
+                // a teardown that then fails on a null field would replace a visible failure with a
+                // confusing one.
+                settings?.Save();
+            }
+            catch (Exception error)
+            {
+                Log.Error(LogTag, $"Could not save settings: {error}");
+            }
         }
 
         // --- Panes -----------------------------------------------------------
@@ -378,7 +421,19 @@ namespace FigureDrawing
             if (LastPickedDocumentUri() is { } initial)
                 intent.PutExtra(DocumentsContract.ExtraInitialUri, initial);
 
-            StartActivityForResult(intent, PickFolderRequestCode);
+            // Launching the picker crosses the system boundary, so throwing is not a defined outcome
+            // (§9, INV-X-11): an image with no documents provider, or one where the user disabled it,
+            // must show a message rather than take the process down on a tap.
+            try
+            {
+                StartActivityForResult(intent, PickFolderRequestCode);
+            }
+            catch (Exception error)
+            {
+                Log.Error(LogTag, $"Could not open the folder picker: {error}");
+                emptyLabel.Text = GetString(Resource.String.folder_error_text);
+                emptyLabel.Visibility = ViewStates.Visible;
+            }
         }
 
         // The remembered library as a *document* uri, which is what the picker navigates to —
@@ -406,29 +461,36 @@ namespace FigureDrawing
             }
         }
 
-        // The remembered library, as a uri, when it is still worth acting on: something is stored,
-        // it is a SAF tree reference (LibraryReference), and the read grant that made it usable is
-        // still held. Whether it is usable is Core's rule; enumerating the platform's grants and
-        // parsing the uri is this layer's job.
+        // The remembered library as a uri, when something usable is stored at all — a SAF tree
+        // reference and not whatever else a settings file can end up holding (LibraryReference).
+        //
+        // Deliberately says nothing about permission: pointing the picker at a folder needs no grant,
+        // and requiring one would turn a revoked permission into a second problem, sending the artist
+        // back to the provider root to find a folder the app still knows the name of. Restoring the
+        // library is the caller that has to check (RestoreLastFolder).
         Android.Net.Uri? RememberedTree()
         {
             if (!LibraryReference.TryParse(settings.LastCollection, out var reference))
                 return null;
 
-            if (!LibraryReference.HasReadGrant(reference, PersistedGrants()))
-            {
-                Log.Info(LogTag, "Remembered folder is no longer granted; nothing to restore.");
-                return null;
-            }
-
             return Android.Net.Uri.Parse(reference);
         }
 
-        // The platform's persisted permissions, reduced to what the rule needs.
-        IEnumerable<PersistedGrant> PersistedGrants()
+        // The platform's persisted permissions, reduced to what the rules need. Materialised rather
+        // than yielded: a lazy sequence would run the Binder call wherever it happened to be
+        // enumerated, which is how a system-server failure escapes the try that was meant to contain
+        // it. The UriPermission peers are freed here — the screen owns what it created (§8).
+        IReadOnlyList<PersistedGrant> PersistedGrants()
         {
+            var grants = new List<PersistedGrant>();
+
             foreach (var permission in ContentResolver!.PersistedUriPermissions)
-                yield return new PersistedGrant(permission.Uri?.ToString(), permission.IsReadPermission);
+            {
+                using (permission)
+                    grants.Add(new PersistedGrant(permission.Uri?.ToString(), permission.IsReadPermission));
+            }
+
+            return grants;
         }
 
         protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
@@ -452,6 +514,11 @@ namespace FigureDrawing
                 // the result intent reports no flags, yielding 0 and a SecurityException.
                 ContentResolver!.TakePersistableUriPermission(treeUri, ActivityFlags.GrantReadUriPermission);
 
+                // Grants accumulate against a per-package cap and the platform drops the OLDEST
+                // past it, so a grant kept for a folder the artist has moved on from is a grant that
+                // can cost them the one they still use. Re-picking the same folder releases nothing.
+                ReleaseSupersededGrants(treeUri.ToString());
+
                 settings.LastCollection = treeUri.ToString();
                 settings.Save();
 
@@ -471,27 +538,110 @@ namespace FigureDrawing
         }
 
         // Comes up with the library the artist last used already loaded, so a relaunch is not a
-        // second trip to the picker. A revoked grant, a deleted folder or a value this app can no
-        // longer read is the ordinary case, not an error: the empty state shows and Start stays shut
-        // (INV-GRP-5).
+        // second trip to the picker. Three outcomes, and they are not the same thing to say: nothing
+        // was ever picked (the first-run prompt stands), a folder is remembered but cannot be opened
+        // (its own message, INV-GRP-5), or it loads.
+        // Hands back every read grant this app holds for a folder that is no longer the remembered
+        // one. Which those are is Core's rule; releasing them is the platform's API.
+        void ReleaseSupersededGrants(string? keep)
+        {
+            foreach (var stale in LibraryReference.GrantsToRelease(keep, PersistedGrants()))
+            {
+                try
+                {
+                    if (Android.Net.Uri.Parse(stale) is { } uri)
+                        ContentResolver!.ReleasePersistableUriPermission(uri, ActivityFlags.GrantReadUriPermission);
+                }
+                catch (Exception error)
+                {
+                    // A grant that cannot be released is not worth a visible failure: the cap is a
+                    // ceiling, not a wall, and the folder just picked is already granted.
+                    Log.Info(LogTag, $"Could not release a superseded folder grant: {error.Message}");
+                }
+            }
+        }
+
         void RestoreLastFolder()
         {
-            if (RememberedTree() is not { } treeUri)
-                return;
+            if (Settings.Discarded)
+                Log.Warn(LogTag, "The settings database was unreadable and was reset; preferences start from defaults.");
 
-            // A grant that is still listed can still be unusable — an unmounted volume or an
-            // uninstalled provider. This runs during OnCreate, and the stale uri is persisted, so an
-            // escape here would be a crash on every launch from now on.
+            if (!LibraryReference.TryParse(settings.LastCollection, out var reference))
+            {
+                Log.Info(LogTag, "No folder remembered yet.");
+                return;
+            }
+
+            var treeUri = Android.Net.Uri.Parse(reference);
+            if (treeUri is null)
+            {
+                ShowRememberedFolderUnavailable();
+                return;
+            }
+
             try
             {
+                // The reference outlives the permission: a grant can be cleared, dropped when its
+                // volume unmounts, or trimmed by the platform, and none of that erases what the
+                // artist picked. Say which of the two is missing rather than showing the first-run
+                // state, which reads as the app having forgotten.
+                if (!LibraryReference.HasReadGrant(reference, PersistedGrants()))
+                {
+                    Log.Warn(LogTag, "The remembered folder is still stored but its read grant is gone.");
+                    ShowRememberedFolderUnavailable();
+                    return;
+                }
+
+                // Before the walk, and in its own try: taking a grant already held is a no-op that
+                // refreshes it, which keeps the folder in daily use off the platform's trim list —
+                // but a refresh that fails must not throw away a library that then loads perfectly
+                // well, and a walk that fails must not skip the refresh.
+                RefreshGrant(treeUri);
+
                 LoadFolder(treeUri);
+                Log.Info(LogTag, $"Restored the remembered folder: {library.Count} images.");
             }
             catch (Exception error)
             {
                 Log.Warn(LogTag, $"Restoring the remembered folder failed: {error.Message}");
-                ResetLibrary();
+                ShowRememberedFolderUnavailable();
             }
         }
+
+        // Re-takes a grant the app already holds. Best effort by design: the grant can be trimmed
+        // between the check above and this call, and losing the refresh costs nothing this launch.
+        void RefreshGrant(Android.Net.Uri treeUri)
+        {
+            try
+            {
+                ContentResolver!.TakePersistableUriPermission(treeUri, ActivityFlags.GrantReadUriPermission);
+            }
+            catch (Exception error)
+            {
+                Log.Info(LogTag, $"Could not refresh the folder grant: {error.Message}");
+            }
+        }
+
+        // The remembered-but-unreachable state. Distinct from a first run on purpose: the choice is
+        // still known, the picker will still open there, and only the permission has to be given
+        // again.
+        void ShowRememberedFolderUnavailable()
+        {
+            walkFailed = true;
+
+            try
+            {
+                ResetLibrary();
+            }
+            finally
+            {
+                walkFailed = false;
+            }
+        }
+
+        // Set while the screen is rendering the aftermath of a folder that would not open, so the
+        // classification below can tell "remembered and unreachable" from "picked and empty".
+        bool walkFailed;
 
         // Builds the reference library for the picked tree (the recursive walk and the pool live in
         // Core) and shows what it found. Any entry whose MIME type starts with "image/" is accepted
@@ -531,9 +681,16 @@ namespace FigureDrawing
             UpdateStartState();
         }
 
+        // What the pane says is decided in Core (LibraryStatus) and only mapped to a resource here:
+        // "never picked", "remembered but unreachable" and "picked and empty" are three different
+        // things to tell the artist, and choosing between them from `library.Count` alone is how the
+        // last two ended up indistinguishable.
         void RenderLibrary()
         {
-            if (library.Count > 0)
+            var status = LibraryReference.Classify(
+                settings.LastCollection, PersistedGrants(), library.Count, walkFailed);
+
+            if (status == LibraryStatus.Ready)
             {
                 emptyLabel.Visibility = ViewStates.Gone;
                 libraryCount.Text =
@@ -541,7 +698,13 @@ namespace FigureDrawing
             }
             else
             {
-                emptyLabel.Text = GetString(Resource.String.empty_folder_text);
+                emptyLabel.Text = GetString(status switch
+                {
+                    LibraryStatus.Unavailable => Resource.String.folder_unavailable_text,
+                    LibraryStatus.Empty => Resource.String.empty_folder_text,
+                    _ => Resource.String.empty_label_text,
+                });
+
                 emptyLabel.Visibility = ViewStates.Visible;
                 libraryCount.Text = GetString(Resource.String.pool_empty_text);
             }

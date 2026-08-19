@@ -32,6 +32,15 @@ public class UiResourceContractTests
             .ToHashSet();
     }
 
+    // Every declared string by name, for tests that care about the text and not just the name.
+    static IReadOnlyDictionary<string, string> StringResources()
+    {
+        var doc = XDocument.Load(TestPaths.Path("Resources", "values", "strings.xml"));
+        return doc.Root!.Elements("string")
+            .Where(e => e.Attribute("name") is not null)
+            .ToDictionary(e => e.Attribute("name")!.Value, e => e.Value);
+    }
+
     static IReadOnlySet<string> StringResourceNames()
     {
         var doc = XDocument.Load(TestPaths.Path("Resources", "values", "strings.xml"));
@@ -97,14 +106,33 @@ public class UiResourceContractTests
     public void Strings_DeclaresSessionSetupStrings(string name) =>
         Assert.Contains(name, StringResourceNames());
 
-    // FD-001 explicit string contract: picker label + both empty-state messages.
+    // FD-001 explicit string contract: picker label + every empty-state message.
     [Theory]
     [InlineData("app_name")]
     [InlineData("pick_button_text")]
     [InlineData("empty_label_text")]
     [InlineData("empty_folder_text")]
+    [InlineData("folder_error_text")]
+    [InlineData("folder_unavailable_text")]
     public void Strings_DeclaresFdStrings(string name) =>
         Assert.Contains(name, StringResourceNames());
+
+    // The four empty states are four different things to tell the artist — nothing picked yet, the
+    // remembered folder cannot be reopened, the folder holds no images, that folder would not open —
+    // and the whole point of distinguishing them is lost the moment two of them read the same. A
+    // copy-paste between these would defeat the feature with every other test still green.
+    [Fact]
+    public void Strings_TheEmptyStateMessagesAreAllDifferent()
+    {
+        var texts = StringResources();
+
+        var messages = new[] { "empty_label_text", "empty_folder_text", "folder_error_text", "folder_unavailable_text" }
+            .Select(name => texts[name])
+            .ToList();
+
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+        Assert.DoesNotContain(messages, string.IsNullOrWhiteSpace);
+    }
 
     // --- Claude Design import: the three tabbed panes -------------------------
 

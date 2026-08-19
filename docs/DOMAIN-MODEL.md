@@ -47,13 +47,13 @@ concept that never varies independently of its neighbour does not earn its own t
 | 1 | `Pose` | Value object | Reference Library → Session Execution | `INV-IMG-*`, `INV-POSE-*` | Implicit (`string` id + session state) |
 | 2 | `ReferenceLibrary` | Aggregate root | Reference Library | `INV-GRP-*`, `INV-POOL-*` | Implemented |
 | 3 | `IDocumentTree` / `DocumentEntry` | Port / value object | Reference Library | `INV-TREE-*` | Implemented |
-| 3a | `LibraryReference` / `PersistedGrant` | Domain service / value object | Reference Library ↔ Preferences | `INV-GRP-5`, `INV-SET-P5`, `INV-X-11` | Implemented |
-| 4 | `SessionSetup` | Domain service | Session Setup | `INV-SET-1..5` | Implemented |
-| 5 | `SessionConfig` | Value object | Session Setup → Execution | `INV-CFG-*` | Implemented |
-| 6 | `DrawingSession<TImage>` | Aggregate root | Session Execution | `INV-SES-*`, `INV-CD-*`, `INV-PLY-*`, `INV-SUM-*`, `INV-POSE-*` | Implemented |
-| 7 | `ViewerTools` | Entity (no identity) | Session Execution | `INV-VIEW-*` | Implemented |
-| 8 | `Settings` | Aggregate root | Preferences | `INV-SET-P*`, `INV-STO-*` | Implemented |
-| 9 | `SessionRecord` | Entity | History | — | Proposed |
+| 4 | `LibraryReference` / `PersistedGrant` | Domain service / value object | Reference Library | `INV-REF-*` | Implemented |
+| 5 | `SessionSetup` | Domain service | Session Setup | `INV-SET-1..5` | Implemented |
+| 6 | `SessionConfig` | Value object | Session Setup → Execution | `INV-CFG-*` | Implemented |
+| 7 | `DrawingSession<TImage>` | Aggregate root | Session Execution | `INV-SES-*`, `INV-CD-*`, `INV-PLY-*`, `INV-SUM-*`, `INV-POSE-*` | Implemented |
+| 8 | `ViewerTools` | Entity (no identity) | Session Execution | `INV-VIEW-*` | Implemented |
+| 9 | `Settings` | Aggregate root | Preferences | `INV-SET-P*`, `INV-STO-*` | Implemented |
+| 10 | `SessionRecord` | Entity | History | — | Proposed |
 
 What was merged, and why, is [§9](#9-consolidation). Read a card first; the mapping is only needed
 when touching the code.
@@ -123,9 +123,11 @@ each document id into the durable content URI a session draws from — the Andro
 `DocumentsContract.BuildDocumentUriUsingTree`, tests pass nothing and keep using `"a"`, `"b"`,
 `"c"`. That is what makes `Pool` *the* session pool rather than a list the screen has to re-map.
 
-**No `IsAvailable`.** Whether a persisted read permission is still held is Android knowledge. A
-revoked grant needs no query of its own: the tree reports nothing, the library enumerates to empty,
-and the empty state shows (`INV-GRP-4`, `INV-GRP-5`).
+**No `IsAvailable` on the aggregate.** The library is its contents, so "may I still read this
+folder" is a question about the *reference*, not about the pool. It is answered by
+`LibraryReference.HasReadGrant` (§2.4), which the screen feeds the platform's grant list — and that
+is why a revoked grant is no longer indistinguishable from an empty folder: it has its own message
+(`INV-GRP-4`, `INV-GRP-5`, `INV-REF-3`).
 
 **Rules — the group**
 
@@ -139,9 +141,12 @@ and the empty state shows (`INV-GRP-4`, `INV-GRP-5`).
   descendant must not loop; visited document ids are tracked.
 - `INV-GRP-4` — **It may be empty, and empty is not an error.** Zero images shows the empty state,
   blocks Start, and does not crash.
-- `INV-GRP-5` — **Access can expire.** The library is only usable while its persisted read
-  permission is still held. A revoked grant is an expected outcome: fall back to the empty state,
-  log, and let the user pick again. Never crash and never prompt in a loop.
+- `INV-GRP-5` — **Access can expire, the choice does not.** The library is only usable while its
+  persisted read permission is still held, and a revoked grant is an expected outcome: fall back,
+  log, and let the user pick again. Never crash and never prompt in a loop. The reference itself
+  is *not* forgotten when access is — a remembered folder that cannot be reopened says so and
+  still aims the picker (`folder_unavailable_text`), because showing the first-run state instead
+  reads as the app having lost the choice.
 - `INV-GRP-6` — **Order is enumeration order.** The library's own order is deterministic and
   provider-driven. Randomizing the *order* belongs to the session, never here — the one random
   choice the library makes is *which* ids cross a bounded handoff (`INV-POOL-6`), and even that
@@ -189,12 +194,57 @@ the aggregate it protects is not an ACL.
 **Rules**
 
 - `INV-TREE-1` — **The port is the only door.** `DocumentsContract`, `ContentResolver`, `Cursor`,
-  and `Uri` stop at the adapter. Nothing SAF-shaped crosses into the domain.
+  and `Uri` stop at the adapter. Nothing SAF-shaped crosses into the domain, with one stated
+  carve-out: the *form* of the reference the app itself persisted is domain knowledge, and
+  `LibraryReference` (§2.4) recognises a `content://` tree URI without ever constructing, resolving
+  or querying one.
 - `INV-TREE-2` — **`GetChildren` returns direct children only.** Recursion is the library's job,
   not the adapter's, so the adapter stays trivial enough to leave untested.
 - `INV-TREE-3` — **A `DocumentEntry` is `(DocumentId, MimeType?)` and nothing more.** A null or
   unknown MIME type is legal and simply is not an image.
 - `INV-TREE-4` — **The adapter never throws through the port.** A failed query yields nothing.
+
+---
+
+### 2.4 `LibraryReference` / `PersistedGrant` — *Implemented*
+
+The *remembered* library: the string `Settings.LastCollection` carries between launches, and the
+rules for deciding what it is still worth doing with. `PersistedGrant` is one entry of the
+platform's permission list — a reference, and whether it is a read grant — reduced to what those
+rules need.
+
+Not folded into `ReferenceLibrary`, because the aggregate is a folder the app can read *now* and
+every question here is asked when there is no library yet: on launch before anything is loaded, and
+on a picker tap that may be about to replace it. Not folded into `Settings`, because the store's job
+is to hold the string, not to know what makes one usable (§5.1).
+
+| Aspect | Value |
+|---|---|
+| Kind | Domain service (stateless) + value object |
+| Context | Reference Library |
+| Identity | None — the reference names the folder, and is its identity |
+| Lifetime | None; every operation is a pure function of its arguments |
+| Operations | `TryParse`, `HasReadGrant`, `GrantsToRelease`, `Classify` |
+
+**Rules**
+
+- `INV-REF-1` — **A reference has a form.** Non-blank, within `MaxLength`, a `content://` scheme, and
+  a `/tree/` segment carrying a non-empty document id under a real authority. Anything else is "no
+  folder remembered", never an error.
+- `INV-REF-2` — **One spelling.** Comparison is over a canonical form: lower-case scheme, upper-case
+  percent-escapes, everything else byte-exact. The stored value and the platform's grant list are
+  two round-trips through the same folder and do not always come back spelled identically; the
+  document id itself stays opaque (`INV-IMG-1`).
+- `INV-REF-3` — **A grant is read, held, and ours.** Only a read grant for the same reference counts.
+  A write-only entry is someone else's, and a missing one means remembered-but-unreachable rather
+  than never-picked (`INV-GRP-5`).
+- `INV-REF-4` — **Superseded grants are handed back.** Picking a different folder releases the read
+  grants held for folders that are no longer remembered; re-picking the same one releases nothing.
+  A package's persisted grants are capped and the platform drops the *oldest*, so a grant kept for a
+  folder the artist has moved on from can cost them the one they still use.
+- `INV-REF-5` — **Four states, four things to say.** `NeverPicked`, `Unavailable`, `Empty`, `Ready`.
+  The screen maps them to messages; it does not decide them. Collapsing `Unavailable` into
+  `NeverPicked` is what makes a revoked permission read as "the app forgot my folder".
 
 ---
 
@@ -428,12 +478,15 @@ dropping the write — losing preferences quietly is worse than failing loudly.
   launch and into intent extras on Start. Neither a session nor the setup logic reads settings at
   runtime.
 - `INV-SET-P4` — **Written at named moments only** — a folder was picked, Start was pressed, a
-  settings toggle was flipped, a break preset was tapped. Never on a keystroke, and never from a
-  background thread.
+  settings toggle was flipped, a break preset was tapped, the screen was left (`OnPause`). Never
+  on a keystroke, and never from a background thread. Leaving the screen is the backstop for how
+  apps actually end: swiped off the recents list or reclaimed while backgrounded, neither of
+  which runs `OnDestroy`.
 - `INV-SET-P5` — **`LastCollection` holds a library reference, not its contents** (`INV-GRP-1`),
   and a stale one is expected (`INV-GRP-5`). The reference is what a launch restores *and* where
-  the picker reopens; whether it is still worth acting on — something stored, a SAF tree form, a
-  read grant still held — is `LibraryReference`, not the screen's judgement.
+  the picker reopens — pointing the picker needs no grant, restoring the library does. What makes a
+  stored value usable at all is `LibraryReference` (`INV-REF-1`..`INV-REF-3`), not the screen's
+  judgement.
 - `INV-SET-P6` — **Losing it is survivable.** A deleted or corrupt database costs preferences and
   nothing else; the app must start with defaults.
 
@@ -442,6 +495,11 @@ dropping the write — losing preferences quietly is worse than failing loudly.
 - `INV-STO-1` — **Sole owner of the database.** No other type opens a `LiteDatabase`.
 - `INV-STO-2` — **It owns the document identity.** Callers never set `Id`; it is stamped on write.
 - `INV-STO-3` — **Disposed with the screen that opened it.**
+- `INV-STO-5` — **A save that returned is a save that survives.** `Save()` checkpoints before it
+  returns, so the value is in the datafile and not only in the write-ahead log. A process killed
+  mid-write can leave that log truncated, and a truncated log does not fail to open — it reads back
+  as the values from *before* the save, which is a preference silently reverting with nothing thrown
+  and nothing logged.
 - `INV-STO-4` — **Storage vocabulary stops here.** Nothing above it speaks BSON, collections, or
   LiteDB types. Merging the document and the store does *not* license spreading BSON attributes
   further: if `Settings` ever grows domain behaviour, split it into a domain type and a persisted
@@ -536,7 +594,8 @@ invariant families has one test file per family rather than one per type.
 | `INV-PLY-*` | `DrawingSession<TImage>` | `DrawingSessionImageTests` with a fake loader |
 | `INV-VIEW-*` | `ViewerTools` | `ViewerToolsTests` |
 | `INV-SET-P*`, `INV-STO-*` | `Settings` | `SettingsTests` |
-| `INV-SET-P5`, `INV-GRP-5` (the remembered folder) | `LibraryReference` + `MainActivity`'s wiring | `LibraryReferenceTests`, `FolderMemoryContractTests`, `FolderPickerUiTests` |
+| `INV-STO-5` | `Settings.Save` (checkpoint) | `SettingsTests` kill + truncation cases, `FolderPickerUiTests.PickedFolder_SurvivesTheProcessBeingKilled` |
+| `INV-REF-*` | `LibraryReference`, wired by `MainActivity` | `LibraryReferenceTests`, `FolderMemoryContractTests`, `FolderPickerUiTests` |
 | Cross-context flows | The objects together | `SessionE2ETests` |
 | `INV-X-*` | Structural | Project references, `AndroidBuildTests`, `SessionScreenContractTests`, `FolderMemoryContractTests`, code review |
 

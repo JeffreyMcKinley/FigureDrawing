@@ -12,8 +12,43 @@ public sealed class SettingsTests : IDisposable
 
     public void Dispose()
     {
-        if (File.Exists(databasePath))
-            File.Delete(databasePath);
+        foreach (var file in Sidecars(databasePath))
+        {
+            try { File.Delete(file); }
+            catch (IOException) { /* still held by a deliberately un-disposed instance */ }
+        }
+    }
+
+    // Everything the store has left on disk at this moment, copied to a fresh path: the datafile and
+    // the write-ahead log beside it. This is what a process that died without closing the database
+    // leaves behind — the artist swiping the app off the recents list, or the system reclaiming a
+    // backgrounded process. Neither runs OnDestroy, so nothing gets the chance to close cleanly.
+    string SnapshotAsIfKilled()
+    {
+        var snapshot = Path.Combine(
+            Path.GetTempPath(), $"figuredrawing-killed-{Guid.NewGuid():N}.db");
+
+        foreach (var (from, to) in Sidecars(databasePath).Zip(Sidecars(snapshot)))
+        {
+            if (!File.Exists(from))
+                continue;
+
+            // Opened share-all: the original store is still holding these files open, exactly as a
+            // live process would be at the instant it is killed.
+            using var source = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var target = new FileStream(to, FileMode.Create, FileAccess.Write, FileShare.None);
+            source.CopyTo(target);
+        }
+
+        return snapshot;
+    }
+
+    static IEnumerable<string> Sidecars(string path)
+    {
+        yield return path;
+        yield return Path.Combine(
+            Path.GetDirectoryName(path)!,
+            Path.GetFileNameWithoutExtension(path) + "-log" + Path.GetExtension(path));
     }
 
     [Fact]
@@ -61,6 +96,150 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(
             "content://com.android.externalstorage.documents/tree/primary%3APics",
             restored.LastCollection);
+    }
+
+    // Swiping the app off the recents list kills the process outright: no OnPause, no OnDestroy, and
+    // so no clean close of the database. A save that only reaches the write-ahead log and is never
+    // folded into the datafile would be lost exactly there — which is the artist picking a folder,
+    // closing the app the way people close apps, and finding it forgotten on the next launch.
+    [Fact]
+    public void Save_SurvivesTheProcessBeingKilledWithoutClosing()
+    {
+        const string picked = "content://com.android.externalstorage.documents/tree/primary%3APics";
+
+        // Deliberately not disposed: disposing is the thing a killed process never gets to do.
+        var settings = Settings.Open(databasePath);
+        settings.LastCollection = picked;
+        settings.PoseDurationSeconds = 45;
+        settings.Save();
+
+        var afterTheKill = SnapshotAsIfKilled();
+
+        try
+        {
+            using var relaunched = Settings.Open(afterTheKill);
+
+            Assert.Equal(picked, relaunched.LastCollection);
+            Assert.Equal(45, relaunched.PoseDurationSeconds);
+        }
+        finally
+        {
+            settings.Dispose();
+            foreach (var file in Sidecars(afterTheKill).Where(File.Exists))
+                File.Delete(file);
+        }
+    }
+
+    // Probe: killed mid-write, so the log is TRUNCATED rather than whole.
+    [Fact]
+    public void Save_SurvivesATruncatedLog()
+    {
+        const string picked = "content://com.android.externalstorage.documents/tree/primary%3APics";
+
+        var settings = Settings.Open(databasePath);
+        settings.LastCollection = picked;
+        settings.PoseDurationSeconds = 45;
+        settings.Save();
+
+        var snapshot = SnapshotAsIfKilled();
+        var log = Sidecars(snapshot).Last();
+
+        var before = File.Exists(log) ? new FileInfo(log).Length : 0;
+        if (before > 3072)
+        {
+            using var stream = new FileStream(log, FileMode.Open, FileAccess.Write);
+            stream.SetLength(before - 3072);
+        }
+
+        try
+        {
+            using var relaunched = Settings.Open(snapshot);
+            Assert.Equal(picked, relaunched.LastCollection);
+            Assert.Equal(45, relaunched.PoseDurationSeconds);
+        }
+        finally
+        {
+            settings.Dispose();
+            foreach (var file in Sidecars(snapshot).Where(File.Exists))
+                File.Delete(file);
+        }
+    }
+
+    // The negative control for the two tests above: with the log thrown away entirely, the value is
+    // still there. That is the whole claim — Save checkpoints, so what a killed process leaves in
+    // the log is a copy of something already folded into the datafile, not the only copy of it. The
+    // day this fails, the durability guarantee has quietly moved back into the log.
+    [Fact]
+    public void Save_LandsInTheDatafile_NotOnlyInTheLog()
+    {
+        const string picked = "content://com.android.externalstorage.documents/tree/primary%3APics";
+
+        var settings = Settings.Open(databasePath);
+        settings.LastCollection = picked;
+        settings.Save();
+
+        var snapshot = SnapshotAsIfKilled();
+        var log = Sidecars(snapshot).Last();
+
+        if (File.Exists(log))
+            File.Delete(log);
+
+        try
+        {
+            using var relaunched = Settings.Open(snapshot);
+            Assert.Equal(picked, relaunched.LastCollection);
+        }
+        finally
+        {
+            settings.Dispose();
+            foreach (var file in Sidecars(snapshot).Where(File.Exists))
+                File.Delete(file);
+        }
+    }
+
+    // A log left by a kill can also be garbage rather than short — or, after a device restore, a log
+    // belonging to a different database entirely. Either way the outcome has to be defined: the
+    // datafile's own values, or defaults. Never a throw at the screen (INV-SET-P6).
+    [Fact]
+    public void Open_WithAnUnreadableLogBesideIt_StartsFromSomethingUsable()
+    {
+        const string picked = "content://com.android.externalstorage.documents/tree/primary%3APics";
+
+        using (var settings = Settings.Open(databasePath))
+        {
+            settings.LastCollection = picked;
+            settings.Save();
+        }
+
+        File.WriteAllBytes(Sidecars(databasePath).Last(), new byte[8192]);
+
+        using var relaunched = Settings.Open(databasePath);
+
+        Assert.True(
+            relaunched.LastCollection == picked || relaunched.LastCollection is null,
+            $"Expected the stored folder or a clean default, got '{relaunched.LastCollection}'.");
+
+        // Whatever it decided, the store is usable afterwards.
+        relaunched.PoseDurationSeconds = 90;
+        relaunched.Save();
+    }
+
+    // Saving twice with nothing changed in between must not be a second write: the screen calls Save
+    // on every pause, and an unconditional upsert-plus-checkpoint there would be main-thread I/O for
+    // nothing (INV-SET-P4).
+    [Fact]
+    public void Save_WithNothingChanged_WritesNothing()
+    {
+        using var settings = Settings.Open(databasePath);
+        settings.LastCollection = "content://com.android.externalstorage.documents/tree/primary%3APics";
+        settings.Save();
+
+        var written = File.GetLastWriteTimeUtc(databasePath);
+
+        settings.Save();
+        settings.Save();
+
+        Assert.Equal(written, File.GetLastWriteTimeUtc(databasePath));
     }
 
     [Fact]

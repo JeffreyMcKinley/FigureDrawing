@@ -30,8 +30,7 @@ criteria are the invariant tables in [DOMAIN-MODEL.md](../DOMAIN-MODEL.md) and t
 [ARCHITECTURE.md §11](../ARCHITECTURE.md#11-testing-strategy). The original ticket stubs were an
 early experiment and were never committed.
 
-**Remembering the folder** is an FD-001 follow-on rather than an id of its own: the library the
-artist last opened is restored on launch and is where the picker reopens. Its criteria are
-`INV-SET-P5` and `INV-X-11` in [DOMAIN-MODEL.md §5.1 / §7](../DOMAIN-MODEL.md), enforced by
-`LibraryReference` and covered by `LibraryReferenceTests`, `FolderMemoryContractTests` and the
-folder-memory tests in `FolderPickerUiTests`.
+[FD-012](FD-012-remembered-folder.md) (the app remembers the folder you picked) shipped after the
+MVP set: the library the artist last opened is restored on launch, survives a process kill, and is
+where the picker reopens. Its criteria are `INV-REF-*`, `INV-SET-P4/P5`, `INV-GRP-5`, `INV-STO-5`
+and `INV-X-11` in [DOMAIN-MODEL.md](../DOMAIN-MODEL.md).

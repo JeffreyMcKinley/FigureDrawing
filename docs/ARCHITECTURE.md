@@ -65,7 +65,8 @@ project means adding a fourth exclude.
 | `GridContrast` | Which tone each rule-of-thirds guide takes from the pose under it |
 | `Data/Settings` | The persisted settings document and its LiteDB store |
 
-Ten domain objects, deliberately: what each one is and why the neighbours it absorbed are not
+Ten catalogued objects, nine of them Core types today (`SessionRecord` is still proposed),
+deliberately: what each one is and why the neighbours it absorbed are not
 separate concepts is [DOMAIN-MODEL.md §1](DOMAIN-MODEL.md) and [§9](DOMAIN-MODEL.md#9-consolidation).
 
 Core types are deterministic and side-effect free apart from `Settings`. They expose state as
@@ -109,6 +110,11 @@ deliberate decision, not a drive-by refactor.
 Core never imports Android. Where it needs something the platform provides, it takes it as a
 constructor parameter. Three patterns already in use — reuse them rather than inventing a fourth:
 
+One carve-out, stated so it is not mistaken for drift: the *form* of the persisted reference —
+that it is a `content://` tree URI — is domain knowledge and lives in `LibraryReference`. Core
+recognises that shape and never constructs, resolves, or queries one; `DocumentsContract`,
+`ContentResolver`, `Cursor` and `Uri` still stop at the adapter.
+
 **Interface adapter.** `IDocumentTree` describes "list the children of a folder document".
 `MainActivity.ContentResolverDocumentTree` backs it with `DocumentsContract` + `ContentResolver`;
 tests back it with an in-memory tree.
@@ -135,7 +141,11 @@ under test.
   at the call site, and not a static or singleton.
 - **Persisted state** is the single `Settings` LiteDB document. It seeds the setup inputs on launch
   and records the last folder — which is both what a launch restores and where the picker reopens
-  (`MainActivity.RememberedTree` / `LastPickedDocumentUri`). `Android.Provider` also declares a `Settings`, so `MainActivity`
+  (`MainActivity.RememberedTree` / `LastPickedDocumentUri`). It is written where each value
+  changes and again in `OnPause` (which first captures the typed inputs, the only values living
+  nowhere else), since a swipe off the recents list never reaches `OnDestroy`. `Settings.Save`
+  checkpoints, so a value that has been saved is in the datafile rather than only in the
+  write-ahead log — see §6. `Android.Provider` also declares a `Settings`, so `MainActivity`
   carries a `using Settings = FigureDrawing.Data.Settings;` alias.
 - **(confirm)** Session state is *not* currently saved in `OnSaveInstanceState`, so process death
   restarts the pose. That is a known gap, not a pattern to copy. `SessionActivity` mitigates the
@@ -149,6 +159,12 @@ under test.
 - `Settings` is `IDisposable` and is disposed in `OnDestroy`. It is a single-document store —
   `Id == 1` in the `settings` collection — opened with `Settings.Open(path)` and written with
   `Save()`. Saving through a disposed instance throws rather than dropping the write silently.
+- `Save()` checkpoints before returning, so a save that returned is a save that survives a kill
+  (`INV-STO-5`). LiteDB is write-ahead logged: an upsert alone leaves the value in `<name>-log.db`,
+  and a process killed mid-write can leave that log truncated — which does *not* fail to open, it
+  reads back as the values from before the save. That is a preference silently reverting with
+  nothing thrown and nothing logged, and it is what "the app forgot my folder" looks like.
+- `Save()` is a no-op when nothing has changed, so calling it on every pause costs nothing.
 - New preferences are new properties on `Settings` with a default value. Do not add a second
   document or a second collection without a reason.
 
@@ -192,9 +208,9 @@ under test.
 ## 9. Errors and logging
 
 - All logs go through `Android.Util.Log` with the tag constant `LogTag = "FigureDrawing"`.
-- Anything crossing the system boundary — SAF results, URI permission grants, image decoding,
-  building a picker hint from a persisted tree URI — is wrapped in `try`/`catch`, logged, and
-  turned into a visible message rather than a crash.
+- Anything crossing the system boundary — SAF results, URI permission grants, launching the
+  picker, image decoding, building a picker hint from a persisted tree URI — is wrapped in
+  `try`/`catch`, logged, and turned into a visible message rather than a crash.
   `MainActivity.OnActivityResult` is the reference example.
 - Catching broad `Exception` is acceptable at those boundaries, and only there. Elsewhere, catch the
   specific type or let it throw.
@@ -211,7 +227,7 @@ under test.
 
 ## 11. Testing strategy
 
-Three tiers, cheapest first. Prefer the cheapest tier that can catch the bug.
+Four tiers, cheapest first. Prefer the cheapest tier that can catch the bug.
 
 **Unit tests** (`FigureDrawing.Tests`) — the default. Everything in Core is covered here, with
 injected clock/`Random`/loader making them deterministic. One file per Core type, except where a
@@ -230,8 +246,10 @@ a missing string, a build property regression. `TestPaths` locates the repo root
 
 A contract test reads *code*, not prose: `FolderMemoryContractTests` strips comments and string
 literals before it asserts anything, because an assertion a comment can satisfy stays green
-through the deletion it exists to catch. Assert which API a method reaches, never how a statement
-is spelled — pinning a local's name or a pattern's syntax fails a refactor that still behaves.
+through the deletion it exists to catch. Assert the APIs a method reaches and the wiring between
+the screen's own methods; never a local's name, a literal's spelling, or a pattern's syntax — those
+fail a refactor that still behaves. Code inside an interpolation hole is stripped with its string:
+a method named in a log message is not wiring.
 
 **E2E-model tests** (`SessionE2ETests.cs`) — drive the Core objects through a whole session in one
 test, without Android: the library enumerates a fake tree, the draft produces the config, and the
@@ -243,7 +261,7 @@ only for behavior genuinely unreachable from Core. Run them with `scripts/run-ap
 which is the only supported entry point: it installs the toolchain, boots the emulator, builds and
 installs a self-contained APK, resets app + picker state, and manages the server.
 
-Four rules the harness depends on, each learned from a failure that looked like an app bug:
+Five rules the harness depends on, each learned from a failure that looked like an app bug:
 
 - **One session per device.** The UiAutomator2 driver installs a single instrumentation on the
   device and force-stops any running instance when a session starts, so two concurrent sessions kill
@@ -388,7 +406,7 @@ Four contexts, each a cohesive vocabulary with its own rules. All four live in
 
 | Context | Owns | Core types today | Namespace / folder |
 |---|---|---|---|
-| **Reference Library** | Discovering drawable images under a picked folder; what counts as an image; the pool | `ReferenceLibrary`, `IDocumentTree`, `DocumentEntry` | `FigureDrawing.Core` (root) |
+| **Reference Library** | Discovering drawable images under a picked folder; what counts as an image; the pool; whether the remembered folder is still usable | `ReferenceLibrary`, `IDocumentTree`, `DocumentEntry`, `LibraryReference`, `PersistedGrant` | `FigureDrawing.Core` (root) |
 | **Session Setup** | Parsing and validating the two inputs; the Start gate; producing a config | `SessionSetup`, `SessionConfig`, and the session's `Draft` phase | `FigureDrawing.Core` (root) |
 | **Session Execution** | Running a session: sequence, passes, counts, skip semantics, time accounting, per-pose countdown, breaks, resolving an id to a displayable image, the totals, the viewing aids | `DrawingSession<TImage>`, `ViewerTools` | `FigureDrawing.Core/Session` |
 | **Preferences** | The persisted settings document and its lifecycle | `Settings` | `FigureDrawing.Core/Data` |
@@ -430,8 +448,10 @@ change:
   interprets a content URI. That opacity is what lets tests pass `"a"`, `"b"`, `"c"`.
 - **Storage Access Framework → Reference Library — anti-corruption layer.** `IDocumentTree` +
   `DocumentEntry` are the ACL. `DocumentsContract`, `ContentResolver`, and `Cursor` stop at
-  `MainActivity.ContentResolverDocumentTree`. Nothing SAF-shaped may cross into Core — that is
-  §4's interface-adapter pattern stated as a context rule.
+  `MainActivity.ContentResolverDocumentTree` — that is §4's interface-adapter pattern stated as a
+  context rule. One carve-out, stated rather than drifted into: the *form* of the reference this app
+  persisted is domain knowledge, so `LibraryReference` recognises a `content://` tree URI while
+  still never constructing, resolving, or querying one (`INV-TREE-1`, `INV-REF-1`).
 - **Preferences → Setup — open host, one direction.** Settings seed the inputs and record the last
   folder. Neither Session Setup nor Session Execution reads `Settings` at runtime; the Android layer
   copies the values it needs into intent extras at launch (§5).
@@ -619,6 +639,13 @@ Live findings, ordered by how much they cost. None is a blocker; each has a stat
    class in the codebase that touches three contexts, so it is where the next rule will be tempted
    to land. On the next feature that touches it, split by context: keep view wiring in the Activity
    and move folder-loading and settings-syncing into their own adapter classes.
+
+   *Deferred once, deliberately (remembered-folder work).* That change added `OnPause`,
+   `SaveSettings`, `CaptureTypedInputs`, `RememberedTree`, `LastPickedDocumentUri`,
+   `PersistedGrants`, `ReleaseSupersededGrants`, `RefreshGrant` and `ShowRememberedFolderUnavailable`
+   to this class, and moved every *rule* it could into `LibraryReference` instead of splitting the
+   screen. The new trigger is concrete: the next feature that adds a method here which is neither
+   view wiring nor a one-line call into Core does the split first.
 2. ~~The pose-restart rule lives in an Activity~~ — closed by the session aggregate (§17).
 3. ~~`SettingsStore` has no port interface~~ — closed by merging it into `Settings` (§17): there was
    no second implementation to justify the seam. `Settings` still carries a LiteDB attribute, and
@@ -635,8 +662,9 @@ Live findings, ordered by how much they cost. None is a blocker; each has a stat
    rather than the other way round; wiring the reset into the phase change is a one-line UX decision
    nobody has made.
 7. **Known Android-layer costs, all pre-dating the consolidation** — image decoding runs on the main
-   thread, both in the repaint loop at a pose boundary and in the folder walk on launch, and
-   persisted folder grants are taken and never released. None is a Core concern and none is new; the
+   thread, both in the repaint loop at a pose boundary and in the folder walk on launch. (Grants
+   are no longer accumulated: picking a different folder releases the ones it supersedes and a
+   restore re-takes the one in use, `INV-REF-4`.) None is a Core concern and none is new; the
    two decoding costs are specified in [FD-009](prds/FD-009-async-reference-library.md) and
    [FD-010](prds/FD-010-pose-decode-off-the-tick.md).
 
@@ -646,7 +674,7 @@ Live findings, ordered by how much they cost. None is a blocker; each has a stat
 
 ## 21. Testing the model, and what "done" looks like
 
-The three tiers of §11 map cleanly onto the model, and the mapping is the rule for where a new test
+The four tiers of §11 map cleanly onto the model, and the mapping is the rule for where a new test
 goes:
 
 - **Aggregate invariants** (the §17 table) → unit tests, one file per Core type, with injected
@@ -663,7 +691,7 @@ Success criteria for the DDD structure, checkable rather than aspirational:
 
 - [x] `FigureDrawing.Core` has zero `Android.*` / `Java.*` references — guarded by project setup and `AndroidBuildTests`
 - [x] Each Core type belongs to exactly one context in the §16 table; new types are added to it
-- [x] The catalogue stays at nine objects unless a new one earns its place — a new Core type must
+- [x] The catalogue stays at ten objects unless a new one earns its place — a new Core type must
       justify itself against [DOMAIN-MODEL.md §9](DOMAIN-MODEL.md#9-consolidation), or be added to
       the catalogue with its own invariants and tests
 - [ ] Context dependencies stay acyclic and match the §16 map — Execution never reads settings, Setup never reads the pool's contents

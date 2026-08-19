@@ -20,7 +20,7 @@ Run tests through `nx` (`./nx.bat run <project>:test`), never the underlying too
 
 **The project's testing strategy — judge coverage against this, not against a line percentage**
 
-Read `docs/ARCHITECTURE.md` §11 (three tiers) and `docs/DOMAIN-MODEL.md` §8 (invariant-to-test map)
+Read `docs/ARCHITECTURE.md` §11 (four tiers) and `docs/DOMAIN-MODEL.md` §8 (invariant-to-test map)
 before reporting gaps, and cite the tier or invariant id. The model is Domain-Driven, so *what is
 worth testing* follows from the domain: an aggregate's invariants, a value object's construction
 rules, a domain service's classification rules. Coverage of getters and wiring is not the goal.
