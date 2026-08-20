@@ -73,8 +73,9 @@ rules below are the workflow around it, not a second policy.
 
 ### Issue tracker
 
-Issues are markdown files: `docs/prds/FD-0NN-<slug>.md`, indexed in `docs/prds/README.md`. There is
-no `gh` CLI here. See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+Issues are markdown files: `docs/prds/FD-0NN-<slug>.md`, indexed in `docs/prds/README.md`. The `gh`
+CLI is installed and `origin` is a GitHub remote, but issues still live in `docs/prds/` — do not
+open GitHub Issues. See [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
 
 ### Triage labels
 
